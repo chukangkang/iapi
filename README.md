@@ -4,7 +4,7 @@
 
 ## 接口
 
-### `POST /v1/images/generations/`
+### `POST /v1/images/generations`
 
 支持：
 
@@ -32,7 +32,7 @@
 | `response_format` | `url` 或 `b64_json` | `url` |
 | `n` | 当前仅支持 `1` | `1` |
 
-### `POST /v1/images/edits/`
+### `POST /v1/images/edits`
 
 使用 multipart 表单，字段与 OpenAI 图片编辑接口接近：
 
@@ -177,7 +177,7 @@ curl -N -X POST http://127.0.0.1:8000/v1/chat/completions ^
 ### 文生图 JSON
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
   -d "{\"prompt\":\"A cat holding a sign that says hello world\",\"size\":\"768x768\",\"num_inference_steps\":4,\"seed\":0}"
 ```
@@ -185,7 +185,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
 ### 图生图 JSON（图片 URL）
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
   -d "{\"prompt\":\"A cat dressed like a wizard\",\"image\":\"https://example.com/input.png\",\"size\":\"768x768\",\"seed\":0}"
 ```
@@ -193,7 +193,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
 ### 16:9 2K 海报
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
   -d "{\"prompt\":\"A cinematic sci-fi city poster at sunset\",\"aspect_ratio\":\"16:9\",\"resolution\":\"2k\",\"seed\":0}"
 ```
@@ -201,7 +201,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
 ### 9:16 4K 手机竖图
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
   -d "{\"prompt\":\"A fantasy mobile wallpaper with glowing clouds\",\"aspect_ratio\":\"9:16\",\"resolution\":\"4k\",\"seed\":0}"
 ```
@@ -209,7 +209,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations/ ^
 ### 图片编辑 multipart
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=A cat dressed like a wizard" ^
   -F "image=@input.png" ^
   -F "size=768x768" ^
@@ -218,12 +218,12 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
 
 ### 图片提升到 4K
 
-本地图片提升到 4K 推荐使用 `POST /v1/images/edits/`，上传原图并指定 `aspect_ratio` + `resolution=4k`。提示词建议加入 `preserve the original composition`，降低重绘时构图漂移的概率。
+本地图片提升到 4K 推荐使用 `POST /v1/images/edits`，上传原图并指定 `aspect_ratio` + `resolution=4k`。提示词建议加入 `preserve the original composition`，降低重绘时构图漂移的概率。
 
 16:9 横版 4K，输出 `3840x2160`：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=Enhance this image to a clean high detail 4K version, preserve the original composition and subject" ^
   -F "image=@input.png" ^
   -F "aspect_ratio=16:9" ^
@@ -234,7 +234,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
 如果要指定精确 4K 尺寸，也可以直接传 `size`：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=Upscale to 4K, sharpen details, preserve original image" ^
   -F "image=@input.png" ^
   -F "size=3840x2160" ^

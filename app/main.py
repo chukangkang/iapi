@@ -158,6 +158,7 @@ def _chat_completion_stream(model_name: str, created: int, content: str):
     yield "data: [DONE]\n\n"
 
 
+@app.post("/v1/images/generations", response_model=ImageResponse)
 @app.post("/v1/images/generations/", response_model=ImageResponse)
 async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageResponse:
     payload = await _parse_generation_request(request)
@@ -165,6 +166,7 @@ async def create_image_generation(request: Request, app_settings: Settings = Dep
     return await _run_image_request(payload=payload, reference_image=reference_image, app_settings=app_settings)
 
 
+@app.post("/v1/images/edits", response_model=ImageResponse)
 @app.post("/v1/images/edits/", response_model=ImageResponse)
 async def create_image_edit(
     prompt: str = Form(...),
