@@ -151,11 +151,13 @@ ALIYUN_REGION_ID=cn-hangzhou
 ```env
 IMAGE_WORKER_COUNT=1
 IMAGE_QUEUE_MAXSIZE=100
+TASK_PUBLIC_BASE_URL=
 ```
 
 - 单张 4090 建议保持 `IMAGE_WORKER_COUNT=1`，避免并发推理导致 OOM。
 - 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
 - 当前任务队列保存在内存中，服务重启后未完成任务会丢失；如需生产级可靠队列，可接 Redis/RQ/Celery。
+- `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址，例如 `https://iapi.example.com`。配置后任务返回的 `url` 会变成 `https://iapi.example.com/v1/images/{task_id}`，避免 New API 网关拦截自定义 `GET /v1/images/{task_id}`。
 
 ## 运行
 
@@ -226,6 +228,14 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
 
 ```bash
 curl http://127.0.0.1:8000/v1/images/img-xxx
+```
+
+如果查询请求必须经过 New API 网关，而网关不支持 `GET /v1/images/{task_id}`，可以改用同一个图片生成接口 POST 查询：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
+  -H "Content-Type: application/json" ^
+  -d "{\"task_id\":\"img-xxx\"}"
 ```
 
 任务完成后 `status=succeeded`，`result` 中包含原 OpenAI 图片响应格式。

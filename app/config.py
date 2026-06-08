@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     max_generation_pixels: int = Field(default=786432, ge=65536)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
+    task_public_base_url: str = ""
     output_dir: Path = Path("outputs")
     public_base_url: str = ""
     hf_token: str = ""
@@ -58,6 +59,11 @@ class Settings(BaseSettings):
     @property
     def normalized_public_base_url(self) -> str:
         return self.public_base_url.rstrip("/")
+
+    @computed_field
+    @property
+    def normalized_task_public_base_url(self) -> str:
+        return self.task_public_base_url.rstrip("/")
 
 
 @lru_cache

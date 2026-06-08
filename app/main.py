@@ -30,7 +30,8 @@ SIZE_PRESETS = {
 
 class ImageGenerationRequest(BaseModel):
     model: Optional[str] = None
-    prompt: str
+    task_id: Optional[str] = None
+    prompt: Optional[str] = None
     image: Optional[str] = None
     n: int = Field(default=1, ge=1, le=1)
     size: Optional[str] = None
@@ -203,10 +204,12 @@ def _chat_completion_stream(model_name: str, created: int, content: str):
     yield "data: [DONE]\n\n"
 
 
-@app.post("/v1/images/generations", response_model=ImageTaskResponse)
-@app.post("/v1/images/generations/", response_model=ImageTaskResponse)
-async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageTaskResponse:
+@app.post("/v1/images/generations")
+@app.post("/v1/images/generations/")
+async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)):
     payload = await _parse_generation_request(request)
+    if payload.task_id:
+        return await _get_image_task_response(payload.task_id)
     reference_image = string_to_image(payload.image)
     return await _submit_image_task(payload, reference_image, app_settings)
 
@@ -253,6 +256,10 @@ async def create_image_edit(
 
 @app.get("/v1/images/{task_id}", response_model=ImageTaskResultResponse)
 async def get_image_task(task_id: str) -> ImageTaskResultResponse:
+    return await _get_image_task_response(task_id)
+
+
+async def _get_image_task_response(task_id: str) -> ImageTaskResultResponse:
     task = await _task_manager.get(task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -270,8 +277,14 @@ async def _submit_image_task(payload: ImageGenerationRequest, reference_image, a
         status=task.status,
         created=task.created,
         updated=task.updated,
-        url=f"/v1/images/{task.id}",
+        url=_task_url(task.id, app_settings),
     )
+
+
+def _task_url(task_id: str, app_settings: Settings) -> str:
+    if app_settings.normalized_task_public_base_url:
+        return f"{app_settings.normalized_task_public_base_url}/v1/images/{task_id}"
+    return f"/v1/images/{task_id}"
 
 
 def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
@@ -300,6 +313,7 @@ async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
 
         return ImageGenerationRequest(
             model=_optional_str(form.get("model")),
+            task_id=_optional_str(form.get("task_id")),
             prompt=str(form.get("prompt") or ""),
             image=image_value,
             n=int(form.get("n") or 1),
@@ -352,7 +366,7 @@ async def _run_image_request(
 
 
 def _validate_image_payload(payload: ImageGenerationRequest) -> None:
-    if not payload.prompt.strip():
+    if not payload.prompt or not payload.prompt.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="prompt is required")
     if payload.n != 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
