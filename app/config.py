@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
+    model_name: str = "flux-image-backend"
     model_path: str = "black-forest-labs/FLUX.2-klein-9b-kv"
     device: str = "auto"
     torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "bfloat16"
@@ -24,6 +25,7 @@ class Settings(BaseSettings):
     hf_token: str = ""
     enable_cpu_offload: bool = True
     pytorch_cuda_alloc_conf: str = "expandable_segments:True"
+    tokenizers_parallelism: str = "false"
     oss_endpoint: str = ""
     oss_access_key_id: str = ""
     oss_access_key_secret: str = ""
@@ -56,4 +58,6 @@ def get_settings() -> Settings:
     settings = Settings()
     if settings.pytorch_cuda_alloc_conf:
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", settings.pytorch_cuda_alloc_conf)
+    if settings.tokenizers_parallelism:
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", settings.tokenizers_parallelism)
     return settings

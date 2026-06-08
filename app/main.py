@@ -52,6 +52,17 @@ class ImageResponse(BaseModel):
     data: list[ImageData]
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: Any
+
+
+class ChatCompletionRequest(BaseModel):
+    model: Optional[str] = None
+    messages: list[ChatMessage] = Field(default_factory=list)
+    stream: bool = False
+
+
 settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,7 +82,30 @@ _storage = ImageStorage(settings)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "model": settings.model_path}
+    return {"status": "ok", "model": settings.model_name, "model_path": settings.model_path}
+
+
+@app.post("/v1/chat/completions")
+def create_chat_completion(payload: ChatCompletionRequest, app_settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    if payload.stream:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="stream=true is not supported")
+
+    created = int(time.time())
+    content = f"Backend is healthy. Model name: {app_settings.model_name}"
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": created,
+        "model": app_settings.model_name,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
 
 
 @app.post("/v1/images/generations/", response_model=ImageResponse)

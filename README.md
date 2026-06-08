@@ -41,6 +41,10 @@
 - `mask`：可选；当前接口会接收但 FLUX.2 Klein KV 示例未使用 mask，因此暂不参与推理
 - 其他参数同 generations
 
+### `POST /v1/chat/completions`
+
+用于兼容 New API / OpenAI 后端连通性测试。该接口不会调用大语言模型，只返回当前后端状态和 `.env` 中配置的 `MODEL_NAME`，证明服务可正常访问。
+
 ## 主流比例
 
 你可以继续用 OpenAI 风格的 `size="宽x高"`，也可以使用 `aspect_ratio` + `resolution` 请求主流尺寸：
@@ -67,8 +71,14 @@ pip install -r requirements.txt
 如果模型需要 Hugging Face 访问权限，请编辑 `.env`：
 
 ```env
+MODEL_NAME=flux-image-backend
 HF_TOKEN=你的 HuggingFace Token
+TOKENIZERS_PARALLELISM=false
 ```
+
+`MODEL_NAME` 是专门返回给 New API / OpenAI 兼容测试的模型名，默认 `flux-image-backend`；实际加载的 Hugging Face 模型仍由 `MODEL_PATH` 控制。
+
+`TOKENIZERS_PARALLELISM=false` 用于关闭 Hugging Face `tokenizers` 在多进程/fork 场景下的并行 warning，不影响图片生成结果。
 
 ## 阿里云 OSS 输出
 
@@ -106,6 +116,16 @@ ALIYUN_REGION_ID=cn-hangzhou
 - `OSS_RETENTION_DAYS=14` 会设置对象响应头的过期时间，真正的 14 天后自动删除需要在 OSS Bucket 中配置生命周期规则：匹配 `OSS_OBJECT_PREFIX`，文件创建后 `14` 天删除。
 - `OSS_STS_ROLE_ARN`、`OSS_STS_DURATION`、`ALIYUN_REGION_ID` 目前作为 STS 配置保留；服务端上传使用 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`。
 
+`OSS_OBJECT_PREFIX` 示例：
+
+| 配置 | 上传对象 Key | 适用场景 |
+| --- | --- | --- |
+| `OSS_OBJECT_PREFIX=images` | `images/1780xxxx-uuid.png` | 默认图片目录 |
+| `OSS_OBJECT_PREFIX=iapi/images` | `iapi/images/1780xxxx-uuid.png` | 推荐生产配置，方便和其他业务隔离 |
+| `OSS_OBJECT_PREFIX=` | `1780xxxx-uuid.png` | 上传到 Bucket 根目录，不推荐混合业务使用 |
+
+建议生产环境使用 `OSS_OBJECT_PREFIX=iapi/images`，然后在 OSS 生命周期规则中匹配前缀 `iapi/images/`，设置文件创建后 `14` 天删除，避免误删 Bucket 中其他目录的文件。
+
 ## 运行
 
 ```bash
@@ -119,6 +139,16 @@ curl http://127.0.0.1:8000/health
 ```
 
 ## 示例
+
+### New API 后端测试
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat/completions ^
+  -H "Content-Type: application/json" ^
+  -d "{\"model\":\"flux-image-backend\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
+```
+
+返回内容中的 `model` 字段和 `choices[0].message.content` 会使用 `.env` 中的 `MODEL_NAME`，默认 `flux-image-backend`。
 
 ### 文生图 JSON
 
@@ -237,6 +267,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
 - 首次请求会加载模型，耗时较长且需要足够显存/内存。
 - 默认 `DEVICE=auto`，优先 CUDA，其次 MPS，最后 CPU。
 - 默认 `TORCH_DTYPE=bfloat16`，如果硬件不支持可改成 `float16` 或 `float32`。
+- `TOKENIZERS_PARALLELISM=false` 用于关闭 tokenizer fork warning；这是提示不是错误。
 - 4090 24G 跑 `FLUX.2-klein-9b-kv` 会比较贴边，默认配置使用 `768x768`、`ENABLE_CPU_OFFLOAD=true` 和 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 来优先保证稳定出图。
 - 如果 `768x768` 稳定后再尝试调高 `MAX_GENERATION_PIXELS`；若仍 OOM，保持 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存。
 - 配置 OSS 后优先返回 OSS URL；未配置 OSS 时，`PUBLIC_BASE_URL` 为空会返回本地相对路径，部署到公网时建议设置为服务外部访问地址。
