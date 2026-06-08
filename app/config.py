@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     max_generation_pixels: int = Field(default=786432, ge=65536)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
+    task_db_path: Path = Path("data/image_tasks.sqlite3")
     task_public_base_url: str = ""
     output_dir: Path = Path("outputs")
     public_base_url: str = ""

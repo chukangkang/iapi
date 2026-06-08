@@ -7,6 +7,7 @@ from typing import Awaitable, Callable, Optional
 from PIL import Image
 
 from app.config import Settings
+from app.task_store import ImageTaskMetadataStore
 
 
 TaskStatus = str
@@ -37,6 +38,7 @@ class ImageTaskManager:
         self.runner = runner
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.image_queue_maxsize)
         self.tasks: dict[str, ImageTask] = {}
+        self.store = ImageTaskMetadataStore(settings)
         self._workers: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
 
@@ -57,11 +59,13 @@ class ImageTaskManager:
         task = ImageTask(id=f"img-{uuid.uuid4().hex}", payload=payload, reference_image=reference_image)
         async with self._lock:
             self.tasks[task.id] = task
+        self.store.save(task)
         try:
             self.queue.put_nowait(task.id)
         except asyncio.QueueFull as exc:
             async with self._lock:
                 self.tasks.pop(task.id, None)
+            self.store.delete(task.id)
             raise exc
         return task
 
@@ -86,6 +90,7 @@ class ImageTaskManager:
         task.worker_id = worker_id
         task.started = int(time.time())
         task.updated = task.started
+        self.store.save(task)
         try:
             task.result = await self.runner(task.payload, task.reference_image)
             task.status = "succeeded"
@@ -98,3 +103,4 @@ class ImageTaskManager:
             task.reference_image = None
         finally:
             task.updated = int(time.time())
+            self.store.save(task)

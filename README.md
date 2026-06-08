@@ -53,10 +53,6 @@
 
 用于兼容 New API / OpenAI 模型列表探测，返回 `.env` 中配置的 `MODEL_NAME`。
 
-### `GET /v1/images/{task_id}`
-
-查询图片任务状态和结果。任务状态包括：`queued`、`running`、`succeeded`、`failed`。
-
 ## 主流比例
 
 你可以继续用 OpenAI 风格的 `size="宽x高"`，也可以使用 `aspect_ratio` + `resolution` 请求主流尺寸：
@@ -144,20 +140,22 @@ ALIYUN_REGION_ID=cn-hangzhou
 
 1. `POST /v1/images/generations` 或 `POST /v1/images/edits` 立即返回任务 ID；为兼容 New API，上游 HTTP 状态码返回 `200 OK`。
 2. 后台 worker 从内存队列取任务，单 worker 串行执行 GPU 推理。
-3. 客户端轮询 `GET /v1/images/{task_id}` 获取状态和最终结果。
+3. 客户端通过 `POST /v1/images/generations` 携带 `task_id` 获取状态和最终结果。
 
 `.env` 队列配置：
 
 ```env
 IMAGE_WORKER_COUNT=1
 IMAGE_QUEUE_MAXSIZE=100
+TASK_DB_PATH=data/image_tasks.sqlite3
 TASK_PUBLIC_BASE_URL=
 ```
 
 - 单张 4090 建议保持 `IMAGE_WORKER_COUNT=1`，避免并发推理导致 OOM。
 - 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
-- 当前任务队列保存在内存中，服务重启后未完成任务会丢失；如需生产级可靠队列，可接 Redis/RQ/Celery。
-- `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址，例如 `https://iapi.example.com`。配置后任务返回的 `url` 会变成 `https://iapi.example.com/v1/images/{task_id}`，避免 New API 网关拦截自定义 `GET /v1/images/{task_id}`。
+- 任务元数据会保存到 `TASK_DB_PATH` 指定的 SQLite 文件中，服务重启后仍可查询已保存的任务状态和已完成结果。
+- 当前待执行队列仍在内存中，服务重启时 `queued` / `running` 任务不会自动续跑；如需生产级可靠队列，可接 Redis/RQ/Celery。
+- `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `POST /v1/images/generations`。
 
 ## 运行
 
@@ -218,24 +216,26 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   "id": "img-xxx",
   "object": "image.task",
   "status": "queued",
-  "created": 1780627200,
-  "updated": 1780627200,
-  "url": "/v1/images/img-xxx"
+  "created": "2026-06-08T11:40:39Z",
+  "updated": "2026-06-08T11:40:39Z",
+  "url": "/v1/images/generations"
 }
 ```
 
 查询任务：
 
 ```bash
-curl http://127.0.0.1:8000/v1/images/img-xxx
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
+  -H "Content-Type: application/json" ^
+  -d "{\"model\":\"flux-image-backend\",\"task_id\":\"img-xxx\"}"
 ```
 
-如果查询请求必须经过 New API 网关，而网关不支持 `GET /v1/images/{task_id}`，可以改用同一个图片生成接口 POST 查询。注意必须带上 `model`，否则 New API 可能默认按 `dall-e` 路由并报 `model_not_found`：
+如果查询请求必须经过 New API 网关，注意必须带上 `model`，否则 New API 可能默认按 `dall-e` 路由并报 `model_not_found`：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"model\":\"flux-image-backend\",\"task_id\":\"img-xxx\"}"
+  -d "{\"model\":\"flux-image-backend\",\"prompt\":\"task_id: img-xxx\"}"
 ```
 
 任务完成后 `status=succeeded`，`result` 中包含原 OpenAI 图片响应格式。
@@ -316,7 +316,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 
 ```json
 {
-  "created": 1780627200,
+  "created": "2026-06-08T11:40:39Z",
   "data": [
     {
       "url": "/outputs/example.png",
@@ -331,7 +331,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 
 ```json
 {
-  "created": 1780627200,
+  "created": "2026-06-08T11:40:39Z",
   "data": [
     {
       "url": "https://your_bucket_name.oss-cn-hangzhou.aliyuncs.com/images/example.png",

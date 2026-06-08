@@ -1,6 +1,7 @@
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -51,7 +52,7 @@ class ImageData(BaseModel):
 
 
 class ImageResponse(BaseModel):
-    created: int
+    created: str
     data: list[ImageData]
 
 
@@ -59,8 +60,8 @@ class ImageTaskResponse(BaseModel):
     id: str
     object: str = "image.task"
     status: str
-    created: int
-    updated: int
+    created: str
+    updated: str
     url: str
 
 
@@ -68,10 +69,10 @@ class ImageTaskResultResponse(BaseModel):
     id: str
     object: str = "image.task"
     status: str
-    created: int
-    updated: int
-    started: Optional[int] = None
-    completed: Optional[int] = None
+    created: str
+    updated: str
+    started: Optional[str] = None
+    completed: Optional[str] = None
     worker_id: Optional[int] = None
     result: Optional[ImageResponse] = None
     error: Optional[str] = None
@@ -133,7 +134,7 @@ def health() -> dict[str, str]:
 
 @app.get("/v1/models")
 def list_models(app_settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    created = int(time.time())
+    created = _format_time(int(time.time()))
     return {
         "object": "list",
         "data": [
@@ -149,7 +150,7 @@ def list_models(app_settings: Settings = Depends(get_settings)) -> dict[str, Any
 
 @app.post("/v1/chat/completions")
 def create_chat_completion(payload: ChatCompletionRequest, app_settings: Settings = Depends(get_settings)):
-    created = int(time.time())
+    created = _format_time(int(time.time()))
     content = f"Backend is healthy. Model name: {app_settings.model_name}"
     if payload.stream:
         return StreamingResponse(
@@ -174,7 +175,7 @@ def create_chat_completion(payload: ChatCompletionRequest, app_settings: Setting
     }
 
 
-def _chat_completion_stream(model_name: str, created: int, content: str):
+def _chat_completion_stream(model_name: str, created: str, content: str):
     chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
     first_chunk = {
         "id": chunk_id,
@@ -208,8 +209,9 @@ def _chat_completion_stream(model_name: str, created: int, content: str):
 @app.post("/v1/images/generations/")
 async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)):
     payload = await _parse_generation_request(request)
-    if payload.task_id:
-        return await _get_image_task_response(payload.task_id)
+    query_task_id = payload.task_id or _task_id_from_prompt(payload.prompt)
+    if query_task_id:
+        return await _get_image_task_response(query_task_id)
     reference_image = string_to_image(payload.image)
     return await _submit_image_task(payload, reference_image, app_settings)
 
@@ -254,16 +256,15 @@ async def create_image_edit(
     return await _submit_image_task(payload, reference_image, app_settings)
 
 
-@app.get("/v1/images/{task_id}", response_model=ImageTaskResultResponse)
-async def get_image_task(task_id: str) -> ImageTaskResultResponse:
-    return await _get_image_task_response(task_id)
-
-
 async def _get_image_task_response(task_id: str) -> ImageTaskResultResponse:
     task = await _task_manager.get(task_id)
-    if task is None:
+    if task is not None:
+        return _task_to_result_response(task)
+
+    task_metadata = _task_manager.store.get(task_id)
+    if task_metadata is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return _task_to_result_response(task)
+    return _task_metadata_to_result_response(task_metadata)
 
 
 async def _submit_image_task(payload: ImageGenerationRequest, reference_image, app_settings: Settings) -> ImageTaskResponse:
@@ -275,29 +276,55 @@ async def _submit_image_task(payload: ImageGenerationRequest, reference_image, a
     return ImageTaskResponse(
         id=task.id,
         status=task.status,
-        created=task.created,
-        updated=task.updated,
+        created=_format_time(task.created),
+        updated=_format_time(task.updated),
         url=_task_url(task.id, app_settings),
     )
 
 
 def _task_url(task_id: str, app_settings: Settings) -> str:
     if app_settings.normalized_task_public_base_url:
-        return f"{app_settings.normalized_task_public_base_url}/v1/images/{task_id}"
-    return f"/v1/images/{task_id}"
+        return f"{app_settings.normalized_task_public_base_url}/v1/images/generations"
+    return "/v1/images/generations"
+
+
+def _task_id_from_prompt(prompt: Optional[str]) -> Optional[str]:
+    if not prompt:
+        return None
+    value = prompt.strip()
+    if value.startswith("task_id:"):
+        value = value.split(":", 1)[1].strip()
+    if value.startswith("img-"):
+        return value
+    return None
 
 
 def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
     return ImageTaskResultResponse(
         id=task.id,
         status=task.status,
-        created=task.created,
-        updated=task.updated,
-        started=task.started,
-        completed=task.completed,
+        created=_format_time(task.created),
+        updated=_format_time(task.updated),
+        started=_format_time(task.started),
+        completed=_format_time(task.completed),
         worker_id=task.worker_id,
         result=task.result,
         error=task.error,
+    )
+
+
+def _task_metadata_to_result_response(task: dict[str, Any]) -> ImageTaskResultResponse:
+    result = ImageResponse.model_validate(task["result"]) if task.get("result") else None
+    return ImageTaskResultResponse(
+        id=task["id"],
+        status=task["status"],
+        created=_format_time(task["created"]),
+        updated=_format_time(task["updated"]),
+        started=_format_time(task.get("started")),
+        completed=_format_time(task.get("completed")),
+        worker_id=task.get("worker_id"),
+        result=result,
+        error=task.get("error"),
     )
 
 
@@ -362,7 +389,13 @@ async def _run_image_request(
         filename = f"{int(time.time())}-{uuid.uuid4().hex}.png"
         data.url = _storage.store_png(image, filename).url
 
-    return ImageResponse(created=int(time.time()), data=[data])
+    return ImageResponse(created=_format_time(int(time.time())), data=[data])
+
+
+def _format_time(value: Optional[int]) -> Optional[str]:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _validate_image_payload(payload: ImageGenerationRequest) -> None:
