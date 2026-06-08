@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -15,12 +16,13 @@ class Settings(BaseSettings):
     device: str = "auto"
     torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "bfloat16"
     num_inference_steps: int = Field(default=4, ge=1)
-    default_width: int = Field(default=1024, ge=64)
-    default_height: int = Field(default=1024, ge=64)
+    default_width: int = Field(default=768, ge=64)
+    default_height: int = Field(default=768, ge=64)
     output_dir: Path = Path("outputs")
     public_base_url: str = ""
     hf_token: str = ""
-    enable_cpu_offload: bool = False
+    enable_cpu_offload: bool = True
+    pytorch_cuda_alloc_conf: str = "expandable_segments:True"
 
     @computed_field
     @property
@@ -30,4 +32,7 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if settings.pytorch_cuda_alloc_conf:
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", settings.pytorch_cuda_alloc_conf)
+    return settings
