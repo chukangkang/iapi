@@ -24,6 +24,26 @@ class Settings(BaseSettings):
     hf_token: str = ""
     enable_cpu_offload: bool = True
     pytorch_cuda_alloc_conf: str = "expandable_segments:True"
+    oss_endpoint: str = ""
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    oss_bucket: str = ""
+    oss_public_base_url: str = ""
+    oss_object_prefix: str = "images"
+    oss_retention_days: int = Field(default=14, ge=1)
+    oss_sts_role_arn: str = ""
+    oss_sts_duration: int = Field(default=3600, ge=900, le=43200)
+    aliyun_region_id: str = "cn-hangzhou"
+
+    @computed_field
+    @property
+    def oss_enabled(self) -> bool:
+        return all([self.oss_endpoint, self.oss_access_key_id, self.oss_access_key_secret, self.oss_bucket])
+
+    @computed_field
+    @property
+    def normalized_oss_public_base_url(self) -> str:
+        return self.oss_public_base_url.rstrip("/")
 
     @computed_field
     @property

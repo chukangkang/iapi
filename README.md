@@ -70,6 +70,42 @@ pip install -r requirements.txt
 HF_TOKEN=你的 HuggingFace Token
 ```
 
+## 阿里云 OSS 输出
+
+配置 OSS 后，`response_format=url` 的生成结果会上传到阿里云 OSS，并返回客户可访问的 OSS URL，不再返回本地 `/outputs/...` 路径。未配置 OSS 时会自动回退到本地输出目录。
+
+在 `.env` 中配置：
+
+```env
+# ========================================
+# 阿里云OSS配置
+# ========================================
+OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
+OSS_ACCESS_KEY_ID=your_access_key_id
+OSS_ACCESS_KEY_SECRET=your_access_key_secret
+OSS_BUCKET=your_bucket_name
+OSS_PUBLIC_BASE_URL=
+OSS_OBJECT_PREFIX=images
+OSS_RETENTION_DAYS=14
+
+# ========================================
+# 阿里云STS配置（用于生成临时凭证）
+# ========================================
+# STS角色ARN，格式: arn:ram::账号ID:role/角色名
+OSS_STS_ROLE_ARN=arn:ram::1234567890:role/ComfyUIRole
+# 临时凭证有效期（秒），默认3600（1小时）
+OSS_STS_DURATION=3600
+# 阿里云地域
+ALIYUN_REGION_ID=cn-hangzhou
+```
+
+说明：
+
+- `OSS_PUBLIC_BASE_URL` 可填 CDN 或自定义域名，例如 `https://img.example.com`；为空时默认返回 `https://bucket.endpoint/object_key`。
+- `OSS_OBJECT_PREFIX` 控制对象前缀，默认上传到 `images/`。
+- `OSS_RETENTION_DAYS=14` 会设置对象响应头的过期时间，真正的 14 天后自动删除需要在 OSS Bucket 中配置生命周期规则：匹配 `OSS_OBJECT_PREFIX`，文件创建后 `14` 天删除。
+- `OSS_STS_ROLE_ARN`、`OSS_STS_DURATION`、`ALIYUN_REGION_ID` 目前作为 STS 配置保留；服务端上传使用 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET`。
+
 ## 运行
 
 ```bash
@@ -126,6 +162,42 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
   -F "seed=0"
 ```
 
+### 图片提升到 4K
+
+本地图片提升到 4K 推荐使用 `POST /v1/images/edits/`，上传原图并指定 `aspect_ratio` + `resolution=4k`。提示词建议加入 `preserve the original composition`，降低重绘时构图漂移的概率。
+
+16:9 横版 4K，输出 `3840x2160`：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
+  -F "prompt=Enhance this image to a clean high detail 4K version, preserve the original composition and subject" ^
+  -F "image=@input.png" ^
+  -F "aspect_ratio=16:9" ^
+  -F "resolution=4k" ^
+  -F "seed=0"
+```
+
+如果要指定精确 4K 尺寸，也可以直接传 `size`：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
+  -F "prompt=Upscale to 4K, sharpen details, preserve original image" ^
+  -F "image=@input.png" ^
+  -F "size=3840x2160" ^
+  -F "seed=0"
+```
+
+常用 4K 输出参数：
+
+| 用途 | 参数 | 输出尺寸 |
+| --- | --- | --- |
+| 横版视频、桌面图 | `aspect_ratio=16:9`、`resolution=4k` | `3840x2160` |
+| 方形图、头像 | `aspect_ratio=1:1`、`resolution=4k` | `2160x2160` |
+| 手机竖图、短视频封面 | `aspect_ratio=9:16`、`resolution=4k` | `2160x3840` |
+| 老照片、证件比例 | `aspect_ratio=4:3`、`resolution=4k` | `4096x3072` |
+
+注意：当前实现是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；如果想尽量保持原图，请在 prompt 中明确写 `preserve original composition`、`preserve original subject`。
+
 ## 响应格式
 
 `response_format=url`：
@@ -143,6 +215,21 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
 }
 ```
 
+配置 OSS 后，`url` 会变成类似：
+
+```json
+{
+  "created": 1780627200,
+  "data": [
+    {
+      "url": "https://your_bucket_name.oss-cn-hangzhou.aliyuncs.com/images/example.png",
+      "b64_json": null,
+      "revised_prompt": "A cat holding a sign that says hello world"
+    }
+  ]
+}
+```
+
 `response_format=b64_json` 时，`data[0].b64_json` 返回 PNG base64。
 
 ## 注意事项
@@ -152,4 +239,4 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits/ ^
 - 默认 `TORCH_DTYPE=bfloat16`，如果硬件不支持可改成 `float16` 或 `float32`。
 - 4090 24G 跑 `FLUX.2-klein-9b-kv` 会比较贴边，默认配置使用 `768x768`、`ENABLE_CPU_OFFLOAD=true` 和 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 来优先保证稳定出图。
 - 如果 `768x768` 稳定后再尝试调高 `MAX_GENERATION_PIXELS`；若仍 OOM，保持 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存。
-- `PUBLIC_BASE_URL` 为空时返回相对路径；部署到公网时建议设置为服务外部访问地址。
+- 配置 OSS 后优先返回 OSS URL；未配置 OSS 时，`PUBLIC_BASE_URL` 为空会返回本地相对路径，部署到公网时建议设置为服务外部访问地址。

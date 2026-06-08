@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
 from app.flux_service import FluxImageService
-from app.image_utils import image_to_base64_png, public_image_url, save_png, string_to_image, upload_file_to_image
+from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
+from app.storage import ImageStorage
 
 
 SIZE_PRESETS = {
@@ -65,6 +66,7 @@ app.add_middleware(
 app.mount("/outputs", StaticFiles(directory=str(settings.output_dir)), name="outputs")
 
 _service = FluxImageService(settings)
+_storage = ImageStorage(settings)
 
 
 @app.get("/health")
@@ -181,8 +183,7 @@ async def _run_image_request(
         data.b64_json = image_to_base64_png(image)
     else:
         filename = f"{int(time.time())}-{uuid.uuid4().hex}.png"
-        save_png(image, app_settings.output_dir, filename)
-        data.url = public_image_url(app_settings.normalized_public_base_url, filename)
+        data.url = _storage.store_png(image, filename).url
 
     return ImageResponse(created=int(time.time()), data=[data])
 
