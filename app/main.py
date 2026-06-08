@@ -13,12 +13,26 @@ from app.flux_service import FluxImageService
 from app.image_utils import image_to_base64_png, public_image_url, save_png, string_to_image, upload_file_to_image
 
 
+SIZE_PRESETS = {
+    ("16:9", "2k"): (2560, 1440),
+    ("16:9", "4k"): (3840, 2160),
+    ("4:3", "2k"): (2048, 1536),
+    ("4:3", "4k"): (4096, 3072),
+    ("1:1", "2k"): (1440, 1440),
+    ("1:1", "4k"): (2160, 2160),
+    ("9:16", "2k"): (1440, 2560),
+    ("9:16", "4k"): (2160, 3840),
+}
+
+
 class ImageGenerationRequest(BaseModel):
     model: Optional[str] = None
     prompt: str
     image: Optional[str] = None
     n: int = Field(default=1, ge=1, le=1)
-    size: Optional[str] = "1024x1024"
+    size: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    resolution: Optional[str] = None
     width: Optional[int] = Field(default=None, ge=64)
     height: Optional[int] = Field(default=None, ge=64)
     num_inference_steps: Optional[int] = Field(default=None, ge=1)
@@ -72,9 +86,11 @@ async def create_image_edit(
     mask: Optional[UploadFile] = File(default=None),
     model: Optional[str] = Form(default=None),
     n: int = Form(default=1),
-    size: Optional[str] = Form(default="1024x1024"),
+    size: Optional[str] = Form(default=None),
     width: Optional[int] = Form(default=None),
     height: Optional[int] = Form(default=None),
+    aspect_ratio: Optional[str] = Form(default=None),
+    resolution: Optional[str] = Form(default=None),
     num_inference_steps: Optional[int] = Form(default=None),
     seed: Optional[int] = Form(default=None),
     response_format: str = Form(default="url"),
@@ -90,6 +106,8 @@ async def create_image_edit(
         prompt=prompt,
         n=n,
         size=size,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
         width=width,
         height=height,
         num_inference_steps=num_inference_steps,
@@ -115,7 +133,9 @@ async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
             prompt=str(form.get("prompt") or ""),
             image=image_value,
             n=int(form.get("n") or 1),
-            size=_optional_str(form.get("size")) or "1024x1024",
+            size=_optional_str(form.get("size")),
+            aspect_ratio=_optional_str(form.get("aspect_ratio")),
+            resolution=_optional_str(form.get("resolution")),
             width=_optional_int(form.get("width")),
             height=_optional_int(form.get("height")),
             num_inference_steps=_optional_int(form.get("num_inference_steps")),
@@ -143,15 +163,18 @@ async def _run_image_request(
     if payload.response_format not in {"url", "b64_json"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
 
-    width, height = _resolve_dimensions(payload, app_settings)
+    output_width, output_height = _resolve_dimensions(payload, app_settings)
+    generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     image = await _service.generate(
         prompt=payload.prompt,
         image=reference_image,
-        width=width,
-        height=height,
+        width=generation_width,
+        height=generation_height,
         num_inference_steps=payload.num_inference_steps or app_settings.num_inference_steps,
         seed=payload.seed,
     )
+    if image.size != (output_width, output_height):
+        image = image.resize((output_width, output_height))
 
     data = ImageData(revised_prompt=payload.prompt)
     if payload.response_format == "b64_json":
@@ -165,6 +188,17 @@ async def _run_image_request(
 
 
 def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:
+    if payload.aspect_ratio or payload.resolution:
+        aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio or "1:1")
+        resolution = (payload.resolution or "2k").lower()
+        if (aspect_ratio, resolution) not in SIZE_PRESETS:
+            supported = ", ".join(f"{ratio}/{res}" for ratio, res in SIZE_PRESETS)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported aspect_ratio/resolution. Supported: {supported}",
+            )
+        return SIZE_PRESETS[(aspect_ratio, resolution)]
+
     width = payload.width
     height = payload.height
     if payload.size and (width is None or height is None):
@@ -175,6 +209,32 @@ def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings)
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="size must look like '1024x1024'") from exc
     return width or app_settings.default_width, height or app_settings.default_height
+
+
+def _resolve_generation_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:
+    output_pixels = output_width * output_height
+    if output_pixels <= app_settings.max_generation_pixels:
+        return _multiple_of_16(output_width), _multiple_of_16(output_height)
+
+    scale = (app_settings.max_generation_pixels / output_pixels) ** 0.5
+    width = max(64, _multiple_of_16(output_width * scale))
+    height = max(64, _multiple_of_16(output_height * scale))
+    return width, height
+
+
+def _normalize_aspect_ratio(value: str) -> str:
+    normalized = value.strip().lower().replace("：", ":").replace("x", ":")
+    aliases = {
+        "square": "1:1",
+        "portrait": "9:16",
+        "vertical": "9:16",
+        "landscape": "16:9",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _multiple_of_16(value: float) -> int:
+    return max(64, int(round(value / 16)) * 16)
 
 
 def _optional_str(value: Any) -> Optional[str]:

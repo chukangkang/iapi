@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     num_inference_steps: int = Field(default=4, ge=1)
     default_width: int = Field(default=768, ge=64)
     default_height: int = Field(default=768, ge=64)
+    max_generation_pixels: int = Field(default=786432, ge=65536)
     output_dir: Path = Path("outputs")
     public_base_url: str = ""
     hf_token: str = ""
