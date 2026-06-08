@@ -203,16 +203,16 @@ def _chat_completion_stream(model_name: str, created: int, content: str):
     yield "data: [DONE]\n\n"
 
 
-@app.post("/v1/images/generations", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
-@app.post("/v1/images/generations/", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+@app.post("/v1/images/generations", response_model=ImageTaskResponse)
+@app.post("/v1/images/generations/", response_model=ImageTaskResponse)
 async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageTaskResponse:
     payload = await _parse_generation_request(request)
     reference_image = string_to_image(payload.image)
     return await _submit_image_task(payload, reference_image, app_settings)
 
 
-@app.post("/v1/images/edits", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
-@app.post("/v1/images/edits/", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+@app.post("/v1/images/edits", response_model=ImageTaskResponse)
+@app.post("/v1/images/edits/", response_model=ImageTaskResponse)
 async def create_image_edit(
     prompt: str = Form(...),
     image: UploadFile = File(...),

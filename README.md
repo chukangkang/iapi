@@ -142,7 +142,7 @@ ALIYUN_REGION_ID=cn-hangzhou
 
 图片生成/编辑接口采用异步任务模式：
 
-1. `POST /v1/images/generations` 或 `POST /v1/images/edits` 立即返回任务 ID。
+1. `POST /v1/images/generations` 或 `POST /v1/images/edits` 立即返回任务 ID；为兼容 New API，上游 HTTP 状态码返回 `200 OK`。
 2. 后台 worker 从内存队列取任务，单 worker 串行执行 GPU 推理。
 3. 客户端轮询 `GET /v1/images/{task_id}` 获取状态和最终结果。
 
