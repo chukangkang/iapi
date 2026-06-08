@@ -230,12 +230,12 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
 curl http://127.0.0.1:8000/v1/images/img-xxx
 ```
 
-如果查询请求必须经过 New API 网关，而网关不支持 `GET /v1/images/{task_id}`，可以改用同一个图片生成接口 POST 查询：
+如果查询请求必须经过 New API 网关，而网关不支持 `GET /v1/images/{task_id}`，可以改用同一个图片生成接口 POST 查询。注意必须带上 `model`，否则 New API 可能默认按 `dall-e` 路由并报 `model_not_found`：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"task_id\":\"img-xxx\"}"
+  -d "{\"model\":\"flux-image-backend\",\"task_id\":\"img-xxx\"}"
 ```
 
 任务完成后 `status=succeeded`，`result` 中包含原 OpenAI 图片响应格式。
