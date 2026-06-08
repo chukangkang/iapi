@@ -1,5 +1,6 @@
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -12,6 +13,7 @@ from app.config import Settings, get_settings
 from app.flux_service import FluxImageService
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
+from app.tasks import ImageTask, ImageTaskManager
 
 
 SIZE_PRESETS = {
@@ -52,6 +54,28 @@ class ImageResponse(BaseModel):
     data: list[ImageData]
 
 
+class ImageTaskResponse(BaseModel):
+    id: str
+    object: str = "image.task"
+    status: str
+    created: int
+    updated: int
+    url: str
+
+
+class ImageTaskResultResponse(BaseModel):
+    id: str
+    object: str = "image.task"
+    status: str
+    created: int
+    updated: int
+    started: Optional[int] = None
+    completed: Optional[int] = None
+    worker_id: Optional[int] = None
+    result: Optional[ImageResponse] = None
+    error: Optional[str] = None
+
+
 class ChatMessage(BaseModel):
     role: str
     content: Any
@@ -66,7 +90,31 @@ class ChatCompletionRequest(BaseModel):
 settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="FLUX.2 Klein KV OpenAI Image API", version="1.0.0")
+_service = FluxImageService(settings)
+_storage = ImageStorage(settings)
+
+
+async def _run_task_payload(payload: object, reference_image) -> ImageResponse:
+    return await _run_image_request(
+        payload=payload,
+        reference_image=reference_image,
+        app_settings=settings,
+    )
+
+
+_task_manager = ImageTaskManager(settings, _run_task_payload)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await _task_manager.start()
+    try:
+        yield
+    finally:
+        await _task_manager.stop()
+
+
+app = FastAPI(title="FLUX.2 Klein KV OpenAI Image API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -75,9 +123,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/outputs", StaticFiles(directory=str(settings.output_dir)), name="outputs")
-
-_service = FluxImageService(settings)
-_storage = ImageStorage(settings)
 
 
 @app.get("/health")
@@ -158,16 +203,16 @@ def _chat_completion_stream(model_name: str, created: int, content: str):
     yield "data: [DONE]\n\n"
 
 
-@app.post("/v1/images/generations", response_model=ImageResponse)
-@app.post("/v1/images/generations/", response_model=ImageResponse)
-async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageResponse:
+@app.post("/v1/images/generations", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+@app.post("/v1/images/generations/", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageTaskResponse:
     payload = await _parse_generation_request(request)
     reference_image = string_to_image(payload.image)
-    return await _run_image_request(payload=payload, reference_image=reference_image, app_settings=app_settings)
+    return await _submit_image_task(payload, reference_image, app_settings)
 
 
-@app.post("/v1/images/edits", response_model=ImageResponse)
-@app.post("/v1/images/edits/", response_model=ImageResponse)
+@app.post("/v1/images/edits", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
+@app.post("/v1/images/edits/", response_model=ImageTaskResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_image_edit(
     prompt: str = Form(...),
     image: UploadFile = File(...),
@@ -183,7 +228,7 @@ async def create_image_edit(
     seed: Optional[int] = Form(default=None),
     response_format: str = Form(default="url"),
     app_settings: Settings = Depends(get_settings),
-) -> ImageResponse:
+) -> ImageTaskResponse:
     if n != 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if mask is not None:
@@ -203,7 +248,44 @@ async def create_image_edit(
         response_format=response_format,
     )
     reference_image = await upload_file_to_image(image)
-    return await _run_image_request(payload=payload, reference_image=reference_image, app_settings=app_settings)
+    return await _submit_image_task(payload, reference_image, app_settings)
+
+
+@app.get("/v1/images/{task_id}", response_model=ImageTaskResultResponse)
+async def get_image_task(task_id: str) -> ImageTaskResultResponse:
+    task = await _task_manager.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return _task_to_result_response(task)
+
+
+async def _submit_image_task(payload: ImageGenerationRequest, reference_image, app_settings: Settings) -> ImageTaskResponse:
+    _validate_image_payload(payload)
+    try:
+        task = await _task_manager.submit(payload, reference_image)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Image task queue is full") from exc
+    return ImageTaskResponse(
+        id=task.id,
+        status=task.status,
+        created=task.created,
+        updated=task.updated,
+        url=f"/v1/images/{task.id}",
+    )
+
+
+def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
+    return ImageTaskResultResponse(
+        id=task.id,
+        status=task.status,
+        created=task.created,
+        updated=task.updated,
+        started=task.started,
+        completed=task.completed,
+        worker_id=task.worker_id,
+        result=task.result,
+        error=task.error,
+    )
 
 
 async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
@@ -244,12 +326,7 @@ async def _run_image_request(
     reference_image,
     app_settings: Settings,
 ) -> ImageResponse:
-    if not payload.prompt.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="prompt is required")
-    if payload.n != 1:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
-    if payload.response_format not in {"url", "b64_json"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
+    _validate_image_payload(payload)
 
     output_width, output_height = _resolve_dimensions(payload, app_settings)
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
@@ -272,6 +349,15 @@ async def _run_image_request(
         data.url = _storage.store_png(image, filename).url
 
     return ImageResponse(created=int(time.time()), data=[data])
+
+
+def _validate_image_payload(payload: ImageGenerationRequest) -> None:
+    if not payload.prompt.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="prompt is required")
+    if payload.n != 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
+    if payload.response_format not in {"url", "b64_json"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
 
 
 def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:

@@ -10,7 +10,6 @@ class FluxImageService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._pipe = None
-        self._lock = asyncio.Lock()
         self._device = None
         self._dtype = None
 
@@ -24,16 +23,15 @@ class FluxImageService:
         num_inference_steps: int,
         seed: Optional[int],
     ) -> Image.Image:
-        async with self._lock:
-            return await asyncio.to_thread(
-                self._generate_sync,
-                prompt=prompt,
-                image=image,
-                width=width,
-                height=height,
-                num_inference_steps=num_inference_steps,
-                seed=seed,
-            )
+        return await asyncio.to_thread(
+            self._generate_sync,
+            prompt=prompt,
+            image=image,
+            width=width,
+            height=height,
+            num_inference_steps=num_inference_steps,
+            seed=seed,
+        )
 
     def _generate_sync(
         self,

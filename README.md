@@ -6,6 +6,8 @@
 
 ### `POST /v1/images/generations`
 
+异步提交图片生成任务，立即返回任务 ID。后台 worker 会按队列执行 GPU 推理。
+
 支持：
 
 - 文生图（t2i）：只传 `prompt`
@@ -34,6 +36,8 @@
 
 ### `POST /v1/images/edits`
 
+异步提交图片编辑任务，立即返回任务 ID。后台 worker 会按队列执行 GPU 推理。
+
 使用 multipart 表单，字段与 OpenAI 图片编辑接口接近：
 
 - `prompt`：必填
@@ -48,6 +52,10 @@
 ### `GET /v1/models`
 
 用于兼容 New API / OpenAI 模型列表探测，返回 `.env` 中配置的 `MODEL_NAME`。
+
+### `GET /v1/images/{task_id}`
+
+查询图片任务状态和结果。任务状态包括：`queued`、`running`、`succeeded`、`failed`。
 
 ## 主流比例
 
@@ -130,6 +138,25 @@ ALIYUN_REGION_ID=cn-hangzhou
 
 建议生产环境使用 `OSS_OBJECT_PREFIX=iapi/images`，然后在 OSS 生命周期规则中匹配前缀 `iapi/images/`，设置文件创建后 `14` 天删除，避免误删 Bucket 中其他目录的文件。
 
+## 异步任务队列
+
+图片生成/编辑接口采用异步任务模式：
+
+1. `POST /v1/images/generations` 或 `POST /v1/images/edits` 立即返回任务 ID。
+2. 后台 worker 从内存队列取任务，单 worker 串行执行 GPU 推理。
+3. 客户端轮询 `GET /v1/images/{task_id}` 获取状态和最终结果。
+
+`.env` 队列配置：
+
+```env
+IMAGE_WORKER_COUNT=1
+IMAGE_QUEUE_MAXSIZE=100
+```
+
+- 单张 4090 建议保持 `IMAGE_WORKER_COUNT=1`，避免并发推理导致 OOM。
+- 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
+- 当前任务队列保存在内存中，服务重启后未完成任务会丢失；如需生产级可靠队列，可接 Redis/RQ/Celery。
+
 ## 运行
 
 ```bash
@@ -181,6 +208,27 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
   -d "{\"prompt\":\"A cat holding a sign that says hello world\",\"size\":\"768x768\",\"num_inference_steps\":4,\"seed\":0}"
 ```
+
+提交后会立即返回：
+
+```json
+{
+  "id": "img-xxx",
+  "object": "image.task",
+  "status": "queued",
+  "created": 1780627200,
+  "updated": 1780627200,
+  "url": "/v1/images/img-xxx"
+}
+```
+
+查询任务：
+
+```bash
+curl http://127.0.0.1:8000/v1/images/img-xxx
+```
+
+任务完成后 `status=succeeded`，`result` 中包含原 OpenAI 图片响应格式。
 
 ### 图生图 JSON（图片 URL）
 
@@ -254,7 +302,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 
 ## 响应格式
 
-`response_format=url`：
+任务查询完成后的 `result` 中，`response_format=url`：
 
 ```json
 {
