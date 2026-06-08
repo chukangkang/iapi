@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -85,13 +85,33 @@ def health() -> dict[str, str]:
     return {"status": "ok", "model": settings.model_name, "model_path": settings.model_path}
 
 
-@app.post("/v1/chat/completions")
-def create_chat_completion(payload: ChatCompletionRequest, app_settings: Settings = Depends(get_settings)) -> dict[str, Any]:
-    if payload.stream:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="stream=true is not supported")
+@app.get("/v1/models")
+def list_models(app_settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    created = int(time.time())
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": app_settings.model_name,
+                "object": "model",
+                "created": created,
+                "owned_by": "iapi",
+            }
+        ],
+    }
 
+
+@app.post("/v1/chat/completions")
+def create_chat_completion(payload: ChatCompletionRequest, app_settings: Settings = Depends(get_settings)):
     created = int(time.time())
     content = f"Backend is healthy. Model name: {app_settings.model_name}"
+    if payload.stream:
+        return StreamingResponse(
+            _chat_completion_stream(app_settings.model_name, created, content),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
         "object": "chat.completion",
@@ -106,6 +126,36 @@ def create_chat_completion(payload: ChatCompletionRequest, app_settings: Setting
         ],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+
+
+def _chat_completion_stream(model_name: str, created: int, content: str):
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
+    first_chunk = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+    }
+    content_chunk = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+    }
+    final_chunk = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    import json
+
+    for chunk in (first_chunk, content_chunk, final_chunk):
+        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 @app.post("/v1/images/generations/", response_model=ImageResponse)

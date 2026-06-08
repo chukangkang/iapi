@@ -45,6 +45,10 @@
 
 用于兼容 New API / OpenAI 后端连通性测试。该接口不会调用大语言模型，只返回当前后端状态和 `.env` 中配置的 `MODEL_NAME`，证明服务可正常访问。
 
+### `GET /v1/models`
+
+用于兼容 New API / OpenAI 模型列表探测，返回 `.env` 中配置的 `MODEL_NAME`。
+
 ## 主流比例
 
 你可以继续用 OpenAI 风格的 `size="宽x高"`，也可以使用 `aspect_ratio` + `resolution` 请求主流尺寸：
@@ -142,10 +146,30 @@ curl http://127.0.0.1:8000/health
 
 ### New API 后端测试
 
+New API 里建议这样配置：
+
+- Base URL：`http://127.0.0.1:8000/v1`
+- 模型名：`.env` 里的 `MODEL_NAME`，默认 `flux-image-backend`
+- Key：当前服务未校验密钥，可填任意非空值用于通过 New API 表单校验
+
+模型列表测试：
+
+```bash
+curl http://127.0.0.1:8000/v1/models
+```
+
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/chat/completions ^
   -H "Content-Type: application/json" ^
   -d "{\"model\":\"flux-image-backend\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
+```
+
+流式测试也会返回兼容 SSE：
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/v1/chat/completions ^
+  -H "Content-Type: application/json" ^
+  -d "{\"model\":\"flux-image-backend\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
 ```
 
 返回内容中的 `model` 字段和 `choices[0].message.content` 会使用 `.env` 中的 `MODEL_NAME`，默认 `flux-image-backend`。
