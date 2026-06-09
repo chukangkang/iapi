@@ -256,6 +256,11 @@ async def create_image_edit(
     return await _submit_image_task(payload, reference_image, app_settings)
 
 
+@app.get("/v1/images/tasks/{task_id}", response_model=ImageTaskResultResponse)
+async def get_image_task(task_id: str) -> ImageTaskResultResponse:
+    return await _get_image_task_response(task_id)
+
+
 async def _get_image_task_response(task_id: str) -> ImageTaskResultResponse:
     task = await _task_manager.get(task_id)
     if task is not None:
@@ -284,8 +289,8 @@ async def _submit_image_task(payload: ImageGenerationRequest, reference_image, a
 
 def _task_url(task_id: str, app_settings: Settings) -> str:
     if app_settings.normalized_task_public_base_url:
-        return f"{app_settings.normalized_task_public_base_url}/v1/images/generations"
-    return "/v1/images/generations"
+        return f"{app_settings.normalized_task_public_base_url}/v1/images/tasks/{task_id}"
+    return f"/v1/images/tasks/{task_id}"
 
 
 def _task_id_from_prompt(prompt: Optional[str]) -> Optional[str]:

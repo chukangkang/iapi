@@ -140,7 +140,7 @@ ALIYUN_REGION_ID=cn-hangzhou
 
 1. `POST /v1/images/generations` 或 `POST /v1/images/edits` 立即返回任务 ID；为兼容 New API，上游 HTTP 状态码返回 `200 OK`。
 2. 后台 worker 从内存队列取任务，单 worker 串行执行 GPU 推理。
-3. 客户端通过 `POST /v1/images/generations` 携带 `task_id` 获取状态和最终结果。
+3. 客户端通过 `GET /v1/images/tasks/{task_id}` 获取状态和最终结果。
 
 `.env` 队列配置：
 
@@ -155,7 +155,7 @@ TASK_PUBLIC_BASE_URL=
 - 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
 - 任务元数据会保存到 `TASK_DB_PATH` 指定的 SQLite 文件中，服务重启后仍可查询已保存的任务状态和已完成结果。
 - 当前待执行队列仍在内存中，服务重启时 `queued` / `running` 任务不会自动续跑；如需生产级可靠队列，可接 Redis/RQ/Celery。
-- `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `POST /v1/images/generations`。
+- `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `GET /v1/images/tasks/{task_id}`。
 
 ## 运行
 
@@ -218,24 +218,14 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   "status": "queued",
   "created": "2026-06-08T11:40:39Z",
   "updated": "2026-06-08T11:40:39Z",
-  "url": "/v1/images/generations"
+  "url": "/v1/images/tasks/img-xxx"
 }
 ```
 
 查询任务：
 
 ```bash
-curl -X POST http://127.0.0.1:8000/v1/images/generations ^
-  -H "Content-Type: application/json" ^
-  -d "{\"model\":\"flux-image-backend\",\"task_id\":\"img-xxx\"}"
-```
-
-如果查询请求必须经过 New API 网关，注意必须带上 `model`，否则 New API 可能默认按 `dall-e` 路由并报 `model_not_found`：
-
-```bash
-curl -X POST http://127.0.0.1:8000/v1/images/generations ^
-  -H "Content-Type: application/json" ^
-  -d "{\"model\":\"flux-image-backend\",\"prompt\":\"task_id: img-xxx\"}"
+curl http://127.0.0.1:8000/v1/images/tasks/img-xxx
 ```
 
 任务完成后 `status=succeeded`，`result` 中包含原 OpenAI 图片响应格式。
