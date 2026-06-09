@@ -73,6 +73,16 @@ class ImageTaskManager:
         async with self._lock:
             return self.tasks.get(task_id)
 
+    def queue_position(self, task_id: str) -> Optional[int]:
+        try:
+            queued_task_ids = list(self.queue._queue)
+        except AttributeError:
+            return None
+        try:
+            return queued_task_ids.index(task_id) + 1
+        except ValueError:
+            return None
+
     async def _worker_loop(self, worker_id: int) -> None:
         while True:
             task_id = await self.queue.get()

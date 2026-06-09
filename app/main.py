@@ -69,6 +69,7 @@ class ImageTaskResultResponse(BaseModel):
     id: str
     object: str = "image.task"
     status: str
+    queue_position: Optional[int] = None
     created: str
     updated: str
     started: Optional[str] = None
@@ -308,6 +309,7 @@ def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
     return ImageTaskResultResponse(
         id=task.id,
         status=task.status,
+        queue_position=_task_manager.queue_position(task.id),
         created=_format_time(task.created),
         updated=_format_time(task.updated),
         started=_format_time(task.started),
