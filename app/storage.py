@@ -42,8 +42,8 @@ class ImageStorage:
             "Content-Type": "image/png",
             "Cache-Control": "public, max-age=31536000, immutable",
         }
-        expires_at = int(time.time()) + self.settings.oss_retention_days * 24 * 60 * 60
-        headers["Expires"] = self._http_date(expires_at)
+        # expires_at = int(time.time()) + self.settings.oss_retention_days * 24 * 60 * 60
+        # headers["Expires"] = self._http_date(expires_at)
 
         bucket = self._get_bucket()
         bucket.put_object(object_key, buffer.getvalue(), headers=headers)
