@@ -107,6 +107,10 @@ QWEN_EDIT_GUIDANCE_SCALE=1.0
 QWEN_EDIT_TRUE_CFG_SCALE=4.0
 QWEN_EDIT_STRENGTH=0.7
 QWEN_EDIT_MAX_PIXELS=1048576
+QWEN_EDIT_SCALE_TO_SIDE=longest
+QWEN_EDIT_SCALE_TO_LENGTH=2048
+QWEN_EDIT_ROUND_TO_MULTIPLE=16
+QWEN_EDIT_BACKGROUND_COLOR=#000000
 QWEN_EDIT_QUANTIZATION=none
 QWEN_EDIT_DEVICE_MAP=balanced
 PIXEL_SHARPEN_ENABLED=true
@@ -138,6 +142,8 @@ REALESRGAN_TILE=512
 如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit` 或 `enhance_mode=qwen_edit_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
 
 `QWEN_EDIT_TRUE_CFG_SCALE=4.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，更贴近 Qwen Image Edit 2511 / Plus pipeline 的推荐调用方式；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS` 建议从 `10` 起步，画质通常比 `4` 步稳定。
+
+截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH=2048`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。服务会先把参考图按最长边缩放到 2048，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到请求的 4K 尺寸。
 
 4090 24G 显存紧张时可开启 Qwen Edit 量化：`QWEN_EDIT_QUANTIZATION=8bit`。更省显存可试 `4bit`，但速度和画质可能波动；量化依赖 Linux 下的 `bitsandbytes` 和支持 `PipelineQuantizationConfig` 的新版 Diffusers，默认 `none` 不启用。量化加载时 `QWEN_EDIT_DEVICE_MAP` 可选 `balanced`、`cuda`、`cpu`，默认 `balanced`；`8bit + balanced` 会启用 CPU fp32 offload，牺牲速度换稳定加载。若使用已经量化好的 Diffusers 仓库，例如 `ovedrive/Qwen-Image-Edit-2511-4bit`，请保持 `QWEN_EDIT_QUANTIZATION=none`，并设置 `QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline`。
 

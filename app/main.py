@@ -549,14 +549,19 @@ def _resolve_generation_dimensions(output_width: int, output_height: int, app_se
 
 
 def _resolve_qwen_edit_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:
-    output_pixels = output_width * output_height
-    if output_pixels <= app_settings.qwen_edit_max_pixels:
-        return _multiple_of_16(output_width), _multiple_of_16(output_height)
-
-    scale = (app_settings.qwen_edit_max_pixels / output_pixels) ** 0.5
-    width = max(64, _multiple_of_16(output_width * scale))
-    height = max(64, _multiple_of_16(output_height * scale))
+    if app_settings.qwen_edit_scale_to_side == "shortest":
+        scale = app_settings.qwen_edit_scale_to_length / min(output_width, output_height)
+    else:
+        scale = app_settings.qwen_edit_scale_to_length / max(output_width, output_height)
+    width = max(64, _round_to_multiple(output_width * scale, app_settings.qwen_edit_round_to_multiple))
+    height = max(64, _round_to_multiple(output_height * scale, app_settings.qwen_edit_round_to_multiple))
     return width, height
+
+
+def _round_to_multiple(value: float, multiple: int) -> int:
+    if multiple <= 1:
+        return int(round(value))
+    return int(round(value / multiple) * multiple)
 
 
 def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:

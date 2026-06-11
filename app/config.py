@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
     qwen_edit_strength: float = Field(default=0.7, ge=0.0, le=1.0)
     qwen_edit_max_pixels: int = Field(default=1048576, ge=65536)
+    qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
+    qwen_edit_scale_to_length: int = Field(default=2048, ge=64)
+    qwen_edit_round_to_multiple: int = Field(default=16, ge=1)
+    qwen_edit_background_color: str = "#000000"
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"
     qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "balanced"
     pixel_sharpen_enabled: bool = True

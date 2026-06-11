@@ -2,7 +2,7 @@ import asyncio
 import inspect
 from typing import Optional
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.config import Settings
 
@@ -59,7 +59,7 @@ class QwenImageEditService:
         signature = inspect.signature(pipe.__call__).parameters
         kwargs = {
             "prompt": prompt,
-            "image": image.convert("RGB"),
+            "image": self._prepare_image(image, width, height),
             "height": height,
             "width": width,
             "num_inference_steps": num_inference_steps,
@@ -80,6 +80,10 @@ class QwenImageEditService:
         with torch.inference_mode():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
+
+    def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
+        color = self.settings.qwen_edit_background_color
+        return ImageOps.pad(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, color=color, centering=(0.5, 0.5))
 
     def _get_pipeline(self):
         if self._pipe is not None:
