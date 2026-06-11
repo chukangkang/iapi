@@ -159,7 +159,9 @@ class SeedVR2Service:
         seed: Optional[int],
     ) -> None:
         env = os.environ.copy()
-        python_path = Path(sys.executable).resolve()
+        python_path = Path(self.settings.seedvr2_python or sys.executable).resolve()
+        if not python_path.exists():
+            raise FileNotFoundError(f"SeedVR2 Python executable not found: {python_path}")
         python_bin_dir = python_path.parent
         env_prefix = python_bin_dir.parent
         existing_pythonpath = env.get("PYTHONPATH", "")
@@ -213,8 +215,8 @@ class SeedVR2Service:
                 else:
                     install_hint = (
                         f"\nMissing Python package: {missing_module}. "
-                        "Install SeedVR extras in the same environment that runs this API: "
-                        f"{sys.executable} -m pip install -r requirements-seedvr.txt"
+                        "Install SeedVR dependencies in the environment used by SEEDVR2_PYTHON: "
+                        f"{python_path} -m pip install -r requirements-seedvr.txt"
                     )
             raise RuntimeError(
                 "SeedVR2 official inference failed. "

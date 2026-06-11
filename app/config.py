@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     realesrgan_tile_pad: int = Field(default=10, ge=0)
     realesrgan_pre_pad: int = Field(default=0, ge=0)
     seedvr2_repo_path: str = ""
+    seedvr2_python: str = ""
     seedvr2_model_path: str = ""
     seedvr2_vae_path: str = ""
     seedvr2_device: str = "cuda:0"

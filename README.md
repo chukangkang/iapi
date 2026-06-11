@@ -125,6 +125,7 @@ REALESRGAN_MAX_PASSES=2
 REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_TILE=512
 SEEDVR2_REPO_PATH=
+SEEDVR2_PYTHON=
 SEEDVR2_MODEL_PATH=
 SEEDVR2_VAE_PATH=
 SEEDVR2_DEVICE=cuda:0
@@ -167,6 +168,7 @@ SEEDVR2_LATENT_NOISE_SCALE=0.0
 如果 Real-ESRGAN 效果不够自然，可以改用 `enhance_mode=seedvr2` 或 `enhance_mode=qwen_edit_seedvr2`。SeedVR2 不是普通超分权重加载器，需要同时准备 **GitHub 代码仓库** 和 **Hugging Face 权重仓库**：
 
 - `SEEDVR2_REPO_PATH`：指向 `https://github.com/ByteDance-Seed/SeedVR` 克隆后的代码目录，里面应有 `projects/inference_seedvr2_3b.py`。
+- `SEEDVR2_PYTHON`：可选，指向已经安装好 SeedVR / Apex 依赖的 `seedvr` 虚拟环境 Python；为空时使用当前 FastAPI 进程的 Python。
 - `SEEDVR2_MODEL_PATH` / `SEEDVR2_VAE_PATH`：指向从 `ByteDance-Seed/SeedVR2-3B` 下载的官方 `.pth` 权重文件，例如 `seedvr2_ema_3b.pth` 和 `ema_vae.pth`。
 - Hugging Face 的 `ByteDance-Seed/SeedVR2-3B` 是权重仓库，不是推理代码仓库，所以它里面没有 `projects/inference_seedvr2_3b.py` 是正常的。
 
@@ -188,13 +190,14 @@ Windows：
 
 下载完成后，`SEEDVR2_REPO_PATH` 必须填写服务端机器上的真实路径。例如本地 Windows 可以是 `e:\sd\iapi\SeedVR`，Linux 服务器通常应改成 `/root/xinglin-data/chat/iapi/SeedVR` 或你的实际部署目录。不要把本机 Windows 路径直接用于 Linux 服务端。
 
-SeedVR2 官方脚本还有一组额外 Python 依赖，需要安装到运行 FastAPI 的同一个环境里，否则会出现 `ModuleNotFoundError: No module named 'mediapy'` 这类错误：
+SeedVR2 官方脚本还有一组额外 Python 依赖。推荐使用独立的 `seedvr` conda/venv 环境安装官方依赖和 Apex，然后让 `SEEDVR2_PYTHON` 指向该环境的 Python；这样 FastAPI 可以继续运行在自己的服务环境里，SeedVR 子进程使用完整 SeedVR 环境。
 
 ```bash
+conda activate seedvr
 python -m pip install -r requirements-seedvr.txt
 ```
 
-如果你使用独立 conda 环境运行服务，请先激活该环境再安装。SeedVR 官方推荐 Python 3.9/3.10；Python 3.12 下部分包可能需要额外适配，尤其是 `flash-attn` / `apex`。
+SeedVR 官方推荐 Python 3.9/3.10；如果你的 `seedvr` 环境已经完整安装 `flash-attn` / `apex`，请优先配置 `SEEDVR2_PYTHON`，不要让 FastAPI 的 Python 3.12 环境直接跑官方脚本。
 
 如果看到 `ModuleNotFoundError: No module named 'data.image'`，这不是 pip 包缺失，而是 `SEEDVR2_REPO_PATH` 指向的 SeedVR 代码目录不完整、路径不对，或环境里已有其它名为 `data` 的包抢占了导入。请确认服务端存在 `SEEDVR2_REPO_PATH/data/image/transforms/divisible_crop.py`，必要时在服务端项目根目录重新执行 `bash scripts/download_seedvr.sh`。下载脚本会自动给 SeedVR 源码目录补空的 `__init__.py`，避免命名空间包冲突。
 
@@ -202,6 +205,7 @@ SeedVR2 服务器示例：
 
 ```env
 SEEDVR2_REPO_PATH=/root/xinglin-data/chat/SeedVR
+SEEDVR2_PYTHON=/root/miniconda3/envs/seedvr/bin/python
 SEEDVR2_MODEL_PATH=/root/xinglin-data/chat/weights/seedvr2_ema_3b.pth
 SEEDVR2_VAE_PATH=/root/xinglin-data/chat/weights/ema_vae.pth
 SEEDVR2_DEVICE=cuda:0
