@@ -4,7 +4,10 @@ __pycache__/
 .venv/
 venv/
 .env
+SeedVR
+SeedVR/
 outputs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
