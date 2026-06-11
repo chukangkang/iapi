@@ -196,6 +196,8 @@ python -m pip install -r requirements-seedvr.txt
 
 如果你使用独立 conda 环境运行服务，请先激活该环境再安装。SeedVR 官方推荐 Python 3.9/3.10；Python 3.12 下部分包可能需要额外适配，尤其是 `flash-attn` / `apex`。
 
+如果看到 `ModuleNotFoundError: No module named 'data.image'`，这不是 pip 包缺失，而是 `SEEDVR2_REPO_PATH` 指向的 SeedVR 代码目录不完整、路径不对，或环境里已有其它名为 `data` 的包抢占了导入。请确认服务端存在 `SEEDVR2_REPO_PATH/data/image/transforms/divisible_crop.py`，必要时在服务端项目根目录重新执行 `bash scripts/download_seedvr.sh`。下载脚本会自动给 SeedVR 源码目录补空的 `__init__.py`，避免命名空间包冲突。
+
 SeedVR2 服务器示例：
 
 ```env
@@ -357,8 +359,8 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   "id": "img-xxx",
   "object": "image.task",
   "status": "queued",
-  "created": "2026-06-08T11:40:39Z",
-  "updated": "2026-06-08T11:40:39Z",
+  "created": "2026-06-08T19:40:39+08:00",
+  "updated": "2026-06-08T19:40:39+08:00",
   "url": "/v1/images/tasks/img-xxx"
 }
 ```
@@ -517,7 +519,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 
 ```json
 {
-  "created": "2026-06-08T11:40:39Z",
+  "created": "2026-06-08T19:40:39+08:00",
   "data": [
     {
       "url": "/outputs/example.png",
@@ -539,7 +541,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 
 ```json
 {
-  "created": "2026-06-08T11:40:39Z",
+  "created": "2026-06-08T19:40:39+08:00",
   "data": [
     {
       "url": "https://your_bucket_name.oss-cn-hangzhou.aliyuncs.com/images/example.png",

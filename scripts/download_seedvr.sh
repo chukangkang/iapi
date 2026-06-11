@@ -22,7 +22,9 @@ required_paths=(
     "configs_3b/main.yaml"
     "common"
     "models"
-    "data"
+    "data/image/transforms/divisible_crop.py"
+    "data/image/transforms/na_resize.py"
+    "data/video/transforms/rearrange.py"
     "projects/video_diffusion_sr"
     "pos_emb.pt"
     "neg_emb.pt"
@@ -32,6 +34,25 @@ for relative_path in "${required_paths[@]}"; do
     if [ ! -e "$target_path/$relative_path" ]; then
         echo "SeedVR checkout is incomplete, missing: $relative_path" >&2
         exit 1
+    fi
+done
+
+package_dirs=(
+    "common"
+    "configs_3b"
+    "data"
+    "data/image"
+    "data/image/transforms"
+    "data/video"
+    "data/video/transforms"
+    "models"
+    "projects"
+    "projects/video_diffusion_sr"
+)
+
+for relative_dir in "${package_dirs[@]}"; do
+    if [ -d "$target_path/$relative_dir" ]; then
+        touch "$target_path/$relative_dir/__init__.py"
     fi
 done
 

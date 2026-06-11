@@ -12,6 +12,32 @@ from PIL import Image
 
 from app.config import Settings
 
+SEEDVR_REQUIRED_SOURCE_PATHS = (
+    "projects/inference_seedvr2_3b.py",
+    "configs_3b/main.yaml",
+    "common",
+    "models",
+    "data/image/transforms/divisible_crop.py",
+    "data/image/transforms/na_resize.py",
+    "data/video/transforms/rearrange.py",
+    "projects/video_diffusion_sr",
+    "pos_emb.pt",
+    "neg_emb.pt",
+)
+SEEDVR_SOURCE_MODULE_PREFIXES = ("common", "configs_3b", "data", "models", "projects")
+SEEDVR_PACKAGE_DIRS = (
+    "common",
+    "configs_3b",
+    "data",
+    "data/image",
+    "data/image/transforms",
+    "data/video",
+    "data/video/transforms",
+    "models",
+    "projects",
+    "projects/video_diffusion_sr",
+)
+
 
 class SeedVR2Service:
     def __init__(self, settings: Settings):
@@ -38,6 +64,7 @@ class SeedVR2Service:
 
             input_path = input_dir / "input.png"
             image.convert("RGB").save(input_path)
+            self._ensure_package_markers(repo_path)
             self._prepare_checkpoints(repo_path, model_path, vae_path)
             self._run_official_script(
                 repo_path=repo_path,
@@ -76,6 +103,13 @@ class SeedVR2Service:
                 "SEEDVR2_REPO_PATH must point to a clone of https://github.com/ByteDance-Seed/SeedVR. "
                 "The Hugging Face ByteDance-Seed/SeedVR2-3B repository only contains weights."
             )
+        missing_source_paths = [relative_path for relative_path in SEEDVR_REQUIRED_SOURCE_PATHS if not (resolved_repo_path / relative_path).exists()]
+        if missing_source_paths:
+            raise FileNotFoundError(
+                "SeedVR2 repo checkout is incomplete or SEEDVR2_REPO_PATH points to the wrong directory. "
+                f"Repo path: {resolved_repo_path}. Missing: {', '.join(missing_source_paths)}. "
+                "Run scripts/download_seedvr.sh on the server from the iAPI project root, then set SEEDVR2_REPO_PATH to that SeedVR directory."
+            )
 
         model_path = Path(self.settings.seedvr2_model_path)
         vae_path = Path(self.settings.seedvr2_vae_path)
@@ -89,6 +123,13 @@ class SeedVR2Service:
                     "Use seedvr2_ema_3b.pth and ema_vae.pth from ByteDance-Seed/SeedVR2-3B."
                 )
         return resolved_repo_path, script_path, model_path, vae_path
+
+    def _ensure_package_markers(self, repo_path: Path) -> None:
+        for relative_dir in SEEDVR_PACKAGE_DIRS:
+            package_dir = repo_path / relative_dir
+            if package_dir.exists() and package_dir.is_dir():
+                init_path = package_dir / "__init__.py"
+                init_path.touch(exist_ok=True)
 
     def _prepare_checkpoints(self, repo_path: Path, model_path: Path, vae_path: Path) -> None:
         ckpt_dir = repo_path / "ckpts"
@@ -154,11 +195,19 @@ class SeedVR2Service:
             install_hint = ""
             if missing_module_match:
                 missing_module = missing_module_match.group(1)
-                install_hint = (
-                    f"\nMissing Python package: {missing_module}. "
-                    "Install SeedVR extras in the same environment that runs this API: "
-                    f"{sys.executable} -m pip install -r requirements-seedvr.txt"
-                )
+                if missing_module.partition(".")[0] in SEEDVR_SOURCE_MODULE_PREFIXES:
+                    install_hint = (
+                        f"\nMissing SeedVR source module: {missing_module}. "
+                        f"SEEDVR2_REPO_PATH may be incomplete or wrong: {repo_path}. "
+                        "Run scripts/download_seedvr.sh on the server from the iAPI project root, "
+                        "and ensure data/image/transforms/divisible_crop.py exists under SEEDVR2_REPO_PATH."
+                    )
+                else:
+                    install_hint = (
+                        f"\nMissing Python package: {missing_module}. "
+                        "Install SeedVR extras in the same environment that runs this API: "
+                        f"{sys.executable} -m pip install -r requirements-seedvr.txt"
+                    )
             raise RuntimeError(
                 "SeedVR2 official inference failed. "
                 f"Command: {' '.join(command)}{install_hint}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"

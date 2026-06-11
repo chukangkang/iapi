@@ -22,7 +22,9 @@ $requiredPaths = @(
     "configs_3b/main.yaml",
     "common",
     "models",
-    "data",
+    "data/image/transforms/divisible_crop.py",
+    "data/image/transforms/na_resize.py",
+    "data/video/transforms/rearrange.py",
     "projects/video_diffusion_sr",
     "pos_emb.pt",
     "neg_emb.pt"
@@ -32,6 +34,26 @@ foreach ($relativePath in $requiredPaths) {
     $path = Join-Path $targetPath $relativePath
     if (-not (Test-Path $path)) {
         throw "SeedVR checkout is incomplete, missing: $relativePath"
+    }
+}
+
+$packageDirs = @(
+    "common",
+    "configs_3b",
+    "data",
+    "data/image",
+    "data/image/transforms",
+    "data/video",
+    "data/video/transforms",
+    "models",
+    "projects",
+    "projects/video_diffusion_sr"
+)
+
+foreach ($relativeDir in $packageDirs) {
+    $path = Join-Path $targetPath $relativeDir
+    if (Test-Path $path) {
+        New-Item -ItemType File -Force -Path (Join-Path $path "__init__.py") | Out-Null
     }
 }
 

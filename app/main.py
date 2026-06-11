@@ -2,7 +2,7 @@ import time
 import uuid
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -33,6 +33,7 @@ SIZE_PRESETS = {
 }
 
 PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height|qwen_edit_strength)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
+SHANGHAI_TIMEZONE = timezone(timedelta(hours=8))
 
 
 class ImageGenerationRequest(BaseModel):
@@ -491,7 +492,7 @@ def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[d
 def _format_time(value: Optional[int]) -> Optional[str]:
     if value is None:
         return None
-    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(value, tz=SHANGHAI_TIMEZONE).isoformat()
 
 
 def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Settings) -> None:
