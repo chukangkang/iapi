@@ -124,6 +124,19 @@ REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
 REALESRGAN_MAX_PASSES=2
 REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_TILE=512
+SEEDVR2_REPO_PATH=
+SEEDVR2_MODEL_PATH=
+SEEDVR2_VAE_PATH=
+SEEDVR2_DEVICE=cuda:0
+SEEDVR2_OFFLOAD_DEVICE=cpu
+SEEDVR2_BLOCKS_TO_SWAP=36
+SEEDVR2_ATTENTION_MODE=sdpa
+SEEDVR2_RESOLUTION=1024
+SEEDVR2_MAX_RESOLUTION=0
+SEEDVR2_BATCH_SIZE=1
+SEEDVR2_COLOR_CORRECTION=wavelet
+SEEDVR2_INPUT_NOISE_SCALE=0.0
+SEEDVR2_LATENT_NOISE_SCALE=0.0
 ```
 
 模式说明：
@@ -136,8 +149,10 @@ REALESRGAN_TILE=512
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
 | `qwen_edit` | Python 直接加载 Qwen Image Edit 做高清编辑，再像素放大到目标尺寸 | 中 |
 | `qwen_edit_realesrgan` | Qwen Image Edit 高清编辑后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
+| `seedvr2` | 使用独立 SeedVR2 repo 做扩散式高清修复/放大 | 中 |
+| `qwen_edit_seedvr2` | Qwen Image Edit 修复后，再交给 SeedVR2 高清修复 | 中 |
 
-如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`flux` 和 `realesrgan_flux` 都会进入扩散模型，没有像素级一致性保证。
+如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`seedvr2`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
 
 如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit` 或 `enhance_mode=qwen_edit_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
 
@@ -148,6 +163,30 @@ REALESRGAN_TILE=512
 4090 24G 显存紧张时可开启 Qwen Edit 量化：`QWEN_EDIT_QUANTIZATION=8bit`。更省显存可试 `4bit`，但速度和画质可能波动；量化依赖 Linux 下的 `bitsandbytes` 和支持 `PipelineQuantizationConfig` 的新版 Diffusers，默认 `none` 不启用。量化加载时 `QWEN_EDIT_DEVICE_MAP` 可选 `balanced`、`cuda`、`cpu`，默认 `balanced`；`8bit + balanced` 会启用 CPU fp32 offload，牺牲速度换稳定加载。若使用已经量化好的 Diffusers 仓库，例如 `ovedrive/Qwen-Image-Edit-2511-4bit`，请保持 `QWEN_EDIT_QUANTIZATION=none`，并设置 `QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline`。
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
+
+如果 Real-ESRGAN 效果不够自然，可以改用 `enhance_mode=seedvr2` 或 `enhance_mode=qwen_edit_seedvr2`。SeedVR2 不是普通超分权重加载器，需要同时准备 **GitHub 代码仓库** 和 **Hugging Face 权重仓库**：
+
+- `SEEDVR2_REPO_PATH`：指向 `https://github.com/ByteDance-Seed/SeedVR` 克隆后的代码目录，里面应有 `projects/inference_seedvr2_3b.py`。
+- `SEEDVR2_MODEL_PATH` / `SEEDVR2_VAE_PATH`：指向从 `ByteDance-Seed/SeedVR2-3B` 下载的官方 `.pth` 权重文件，例如 `seedvr2_ema_3b.pth` 和 `ema_vae.pth`。
+- Hugging Face 的 `ByteDance-Seed/SeedVR2-3B` 是权重仓库，不是推理代码仓库，所以它里面没有 `projects/inference_seedvr2_3b.py` 是正常的。
+
+当前后端已内置 SeedVR2 桥接逻辑：请求进入 `enhance_mode=seedvr2` 或 `enhance_mode=qwen_edit_seedvr2` 后，会把输入图保存到临时目录，在本地 `SeedVR` 代码仓库里执行官方 `projects/inference_seedvr2_3b.py`，再读取输出图片返回。运行过程不访问外链，但首次执行会加载完整 SeedVR2 模型，耗时和显存占用都比较高。
+
+SeedVR2 服务器示例：
+
+```env
+SEEDVR2_REPO_PATH=/root/xinglin-data/chat/SeedVR
+SEEDVR2_MODEL_PATH=/root/xinglin-data/chat/weights/seedvr2_ema_3b.pth
+SEEDVR2_VAE_PATH=/root/xinglin-data/chat/weights/ema_vae.pth
+SEEDVR2_DEVICE=cuda:0
+SEEDVR2_OFFLOAD_DEVICE=cpu
+SEEDVR2_BLOCKS_TO_SWAP=36
+SEEDVR2_ATTENTION_MODE=sdpa
+SEEDVR2_RESOLUTION=1024
+SEEDVR2_COLOR_CORRECTION=wavelet
+```
+
+注意：官方 `projects/inference_seedvr2_3b.py` 默认从 `./ckpts/seedvr2_ema_3b.pth` 和 `./ckpts/ema_vae.pth` 加载权重。后端会自动在 `SEEDVR2_REPO_PATH/ckpts` 下创建软链接；如果系统不允许软链接，则复制权重文件。请预留足够磁盘空间。ComfyUI 社区转换的 `.safetensors` / fp8 权重不能直接给官方脚本使用。
 
 `UPSCALE_FIT_MODE=cover` 会保持原图比例并居中裁剪到目标 4K，避免黑边，也避免强行拉伸导致字体变形。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。高清输出推荐保持 `cover`。
 
