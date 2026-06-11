@@ -93,7 +93,7 @@ class QwenImageEditService:
             load_kwargs["torch_dtype"] = self._dtype
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
-        quantization_config = self._quantization_config()
+        quantization_config = self._quantization_config(diffusers)
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
             load_kwargs["device_map"] = "auto"
@@ -111,13 +111,19 @@ class QwenImageEditService:
         self._pipe = pipe
         return pipe
 
-    def _quantization_config(self):
+    def _quantization_config(self, diffusers):
         if self.settings.qwen_edit_quantization == "none":
             return None
+        pipeline_quantization_config = getattr(diffusers, "PipelineQuantizationConfig", None)
+        if pipeline_quantization_config is not None:
+            if self.settings.qwen_edit_quantization == "8bit":
+                return pipeline_quantization_config(quant_backend="bitsandbytes_8bit")
+            return pipeline_quantization_config(quant_backend="bitsandbytes_4bit", quant_kwargs={"bnb_4bit_compute_dtype": self._dtype})
+
         try:
             from transformers import BitsAndBytesConfig
         except Exception as exc:
-            raise RuntimeError("QWEN_EDIT_QUANTIZATION requires bitsandbytes and a recent transformers version.") from exc
+            raise RuntimeError("QWEN_EDIT_QUANTIZATION requires bitsandbytes and a recent diffusers/transformers version.") from exc
 
         if self.settings.qwen_edit_quantization == "8bit":
             return BitsAndBytesConfig(load_in_8bit=True)
