@@ -99,6 +99,10 @@ TOKENIZERS_PARALLELISM=false
 ```env
 DEFAULT_ENHANCE_MODE=flux
 FLUX_REFINE_STRENGTH=0.08
+PIXEL_SHARPEN_ENABLED=true
+PIXEL_SHARPEN_RADIUS=1.4
+PIXEL_SHARPEN_PERCENT=140
+PIXEL_SHARPEN_THRESHOLD=3
 REALESRGAN_MODEL_PATH=
 REALESRGAN_TILE=512
 ```
@@ -108,11 +112,11 @@ REALESRGAN_TILE=512
 | 模式 | 说明 | 文字一致性 |
 | --- | --- | --- |
 | `flux` | 当前默认：FLUX 图生图/文生图，适合创作和重绘 | 可能改变文字 |
-| `pixel` | 只用 Lanczos 像素放大，不进扩散模型 | 最稳定 |
+| `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
 | `realesrgan` | 用 Real-ESRGAN 超分，失败前需安装依赖并配置权重路径 | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
 
-严格要求“字体、文字 100% 不变”时，优先 `pixel`；安装并配置 Real-ESRGAN 权重后可试 `realesrgan`。`realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
+严格要求“字体、文字 100% 不变”时，优先 `pixel`；但 `pixel` 只是保真放大和锐化，不会凭空生成新纹理，低分辨率原图放到 4K 仍可能显得模糊。安装并配置 Real-ESRGAN 权重后可试 `realesrgan`，它才是 AI 超分细节增强。`realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
 
 ## 阿里云 OSS 输出
 
@@ -353,7 +357,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 | 手机竖图、短视频封面 | `aspect_ratio=9:16`、`resolution=4k` | `2160x3840` |
 | 老照片、证件比例 | `aspect_ratio=4:3`、`resolution=4k` | `4096x3072` |
 
-注意：`enhance_mode=flux` 是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；如果想尽量保持原图，请使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
+注意：`enhance_mode=flux` 是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；`enhance_mode=pixel` 保真但不会生成真实高清细节；如果想兼顾清晰度和保真，请配置 Real-ESRGAN 后使用 `enhance_mode=realesrgan`。
 
 ## 响应格式
 

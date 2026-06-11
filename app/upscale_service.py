@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from app.config import Settings
 
@@ -29,7 +29,19 @@ class ImageUpscaleService:
             upscaled = self._realesrgan_upscale(image, width=width, height=height)
             if upscaled is not None:
                 return upscaled
-        return image.resize((width, height), Image.Resampling.LANCZOS)
+        upscaled = image.resize((width, height), Image.Resampling.LANCZOS)
+        return self._sharpen_pixel_upscale(upscaled) if method == "pixel" else upscaled
+
+    def _sharpen_pixel_upscale(self, image: Image.Image) -> Image.Image:
+        if not self.settings.pixel_sharpen_enabled or self.settings.pixel_sharpen_percent <= 0:
+            return image
+        return image.filter(
+            ImageFilter.UnsharpMask(
+                radius=self.settings.pixel_sharpen_radius,
+                percent=self.settings.pixel_sharpen_percent,
+                threshold=self.settings.pixel_sharpen_threshold,
+            )
+        )
 
     def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int) -> Optional[Image.Image]:
         model_path = self.settings.realesrgan_model_path.strip()

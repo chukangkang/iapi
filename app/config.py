@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     max_generation_pixels: int = Field(default=786432, ge=65536)
     default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
+    pixel_sharpen_enabled: bool = True
+    pixel_sharpen_radius: float = Field(default=1.4, ge=0.0)
+    pixel_sharpen_percent: int = Field(default=140, ge=0)
+    pixel_sharpen_threshold: int = Field(default=3, ge=0)
     realesrgan_model_path: str = ""
     realesrgan_model_name: str = "RealESRGAN_x4plus"
     realesrgan_tile: int = Field(default=512, ge=0)
