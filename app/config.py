@@ -29,8 +29,9 @@ class Settings(BaseSettings):
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit"
     qwen_edit_pipeline_class: str = "QwenImageEditPipeline"
-    qwen_edit_steps: int = Field(default=4, ge=1)
+    qwen_edit_steps: int = Field(default=10, ge=1)
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
+    qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
     qwen_edit_strength: float = Field(default=0.7, ge=0.0, le=1.0)
     qwen_edit_max_pixels: int = Field(default=1048576, ge=65536)
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"

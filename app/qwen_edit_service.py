@@ -66,8 +66,12 @@ class QwenImageEditService:
         }
         if negative_prompt and "negative_prompt" in signature:
             kwargs["negative_prompt"] = negative_prompt
+        elif "negative_prompt" in signature:
+            kwargs["negative_prompt"] = " "
         if "guidance_scale" in signature:
             kwargs["guidance_scale"] = guidance_scale
+        if "true_cfg_scale" in signature:
+            kwargs["true_cfg_scale"] = self.settings.qwen_edit_true_cfg_scale
         if strength is not None and "strength" in signature:
             kwargs["strength"] = strength
         if seed is not None:
