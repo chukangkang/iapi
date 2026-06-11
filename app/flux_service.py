@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from typing import Optional
 
 from PIL import Image
@@ -22,6 +23,7 @@ class FluxImageService:
         height: int,
         num_inference_steps: int,
         seed: Optional[int],
+        strength: Optional[float] = None,
     ) -> Image.Image:
         return await asyncio.to_thread(
             self._generate_sync,
@@ -31,6 +33,7 @@ class FluxImageService:
             height=height,
             num_inference_steps=num_inference_steps,
             seed=seed,
+            strength=strength,
         )
 
     def _generate_sync(
@@ -42,6 +45,7 @@ class FluxImageService:
         height: int,
         num_inference_steps: int,
         seed: Optional[int],
+        strength: Optional[float],
     ) -> Image.Image:
         import torch
 
@@ -54,6 +58,8 @@ class FluxImageService:
         }
         if image is not None:
             kwargs["image"] = image
+        if strength is not None and "strength" in inspect.signature(pipe.__call__).parameters:
+            kwargs["strength"] = strength
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
 

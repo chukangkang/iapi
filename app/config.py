@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     default_width: int = Field(default=768, ge=64)
     default_height: int = Field(default=768, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
+    default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux"] = "flux"
+    flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
+    realesrgan_model_path: str = ""
+    realesrgan_model_name: str = "RealESRGAN_x4plus"
+    realesrgan_tile: int = Field(default=512, ge=0)
+    realesrgan_tile_pad: int = Field(default=10, ge=0)
+    realesrgan_pre_pad: int = Field(default=0, ge=0)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
     task_db_path: Path = Path("data/image_tasks.sqlite3")

@@ -15,6 +15,7 @@ from app.flux_service import FluxImageService
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
+from app.upscale_service import ImageUpscaleService, realesrgan_available
 
 
 SIZE_PRESETS = {
@@ -43,6 +44,8 @@ class ImageGenerationRequest(BaseModel):
     num_inference_steps: Optional[int] = Field(default=None, ge=1)
     seed: Optional[int] = None
     response_format: str = "url"
+    enhance_mode: Optional[str] = None
+    flux_refine_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class ImageData(BaseModel):
@@ -94,6 +97,7 @@ settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
 _service = FluxImageService(settings)
+_upscale_service = ImageUpscaleService(settings)
 _storage = ImageStorage(settings)
 
 
@@ -233,6 +237,8 @@ async def create_image_edit(
     num_inference_steps: Optional[int] = Form(default=None),
     seed: Optional[int] = Form(default=None),
     response_format: str = Form(default="url"),
+    enhance_mode: Optional[str] = Form(default=None),
+    flux_refine_strength: Optional[float] = Form(default=None),
     app_settings: Settings = Depends(get_settings),
 ) -> ImageTaskResponse:
     if n != 1:
@@ -252,6 +258,8 @@ async def create_image_edit(
         num_inference_steps=num_inference_steps,
         seed=seed,
         response_format=response_format,
+        enhance_mode=enhance_mode,
+        flux_refine_strength=flux_refine_strength,
     )
     reference_image = await upload_file_to_image(image)
     return await _submit_image_task(payload, reference_image, app_settings)
@@ -274,7 +282,7 @@ async def _get_image_task_response(task_id: str) -> ImageTaskResultResponse:
 
 
 async def _submit_image_task(payload: ImageGenerationRequest, reference_image, app_settings: Settings) -> ImageTaskResponse:
-    _validate_image_payload(payload)
+    _validate_image_payload(payload, app_settings)
     try:
         task = await _task_manager.submit(payload, reference_image)
     except Exception as exc:
@@ -359,6 +367,8 @@ async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
             num_inference_steps=_optional_int(form.get("num_inference_steps")),
             seed=_optional_int(form.get("seed")),
             response_format=_optional_str(form.get("response_format")) or "url",
+            enhance_mode=_optional_str(form.get("enhance_mode")),
+            flux_refine_strength=_optional_float(form.get("flux_refine_strength")),
         )
 
     try:
@@ -374,9 +384,24 @@ async def _run_image_request(
     reference_image,
     app_settings: Settings,
 ) -> ImageResponse:
-    _validate_image_payload(payload)
+    _validate_image_payload(payload, app_settings)
 
     output_width, output_height = _resolve_dimensions(payload, app_settings)
+    enhance_mode = _resolve_enhance_mode(payload, app_settings)
+
+    if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
+        upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
+        image = await _upscale_service.upscale(
+            reference_image,
+            width=output_width,
+            height=output_height,
+            method=upscale_method,
+        )
+        if enhance_mode != "realesrgan_flux":
+            return _image_response(image, payload)
+
+        reference_image = image
+
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     image = await _service.generate(
         prompt=payload.prompt,
@@ -385,10 +410,15 @@ async def _run_image_request(
         height=generation_height,
         num_inference_steps=payload.num_inference_steps or app_settings.num_inference_steps,
         seed=payload.seed,
+        strength=payload.flux_refine_strength or app_settings.flux_refine_strength if enhance_mode == "realesrgan_flux" else None,
     )
     if image.size != (output_width, output_height):
         image = image.resize((output_width, output_height))
 
+    return _image_response(image, payload)
+
+
+def _image_response(image, payload: ImageGenerationRequest) -> ImageResponse:
     data = ImageData(revised_prompt=payload.prompt)
     if payload.response_format == "b64_json":
         data.b64_json = image_to_base64_png(image)
@@ -405,13 +435,28 @@ def _format_time(value: Optional[int]) -> Optional[str]:
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _validate_image_payload(payload: ImageGenerationRequest) -> None:
+def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Settings) -> None:
     if not payload.prompt or not payload.prompt.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="prompt is required")
     if payload.n != 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if payload.response_format not in {"url", "b64_json"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
+    if payload.enhance_mode and payload.enhance_mode not in {"flux", "pixel", "realesrgan", "realesrgan_flux"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="enhance_mode must be one of: flux, pixel, realesrgan, realesrgan_flux",
+        )
+    if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not realesrgan_available():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Real-ESRGAN dependencies are not installed. Install realesrgan and basicsr, or use enhance_mode=pixel.",
+        )
+    if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not app_settings.realesrgan_model_path.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REALESRGAN_MODEL_PATH is required for enhance_mode=realesrgan or realesrgan_flux.",
+        )
 
 
 def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:
@@ -449,6 +494,10 @@ def _resolve_generation_dimensions(output_width: int, output_height: int, app_se
     return width, height
 
 
+def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
+    return payload.enhance_mode or app_settings.default_enhance_mode
+
+
 def _normalize_aspect_ratio(value: str) -> str:
     normalized = value.strip().lower().replace("：", ":").replace("x", ":")
     aliases = {
@@ -475,6 +524,12 @@ def _optional_int(value: Any) -> Optional[int]:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    return float(value)
 
 
 @app.exception_handler(Exception)

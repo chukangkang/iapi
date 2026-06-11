@@ -32,6 +32,8 @@
 | `num_inference_steps` | 推理步数 | `4` |
 | `seed` | 随机种子 | `null` |
 | `response_format` | `url` 或 `b64_json` | `url` |
+| `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux` | `.env` 默认值 |
+| `flux_refine_strength` | `realesrgan_flux` 时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
 | `n` | 当前仅支持 `1` | `1` |
 
 ### `POST /v1/images/edits`
@@ -64,7 +66,9 @@
 | 方形图、头像、朋友圈 | `1:1` | `1440x1440` | `2160x2160` |
 | 手机竖图、短视频封面 | `9:16` | `1440x2560` | `2160x3840` |
 
-为了避免 4090 24G 在 2K/4K 直接推理时 OOM，服务会根据 `.env` 里的 `MAX_GENERATION_PIXELS` 先按比例生成安全尺寸，再放大到目标输出尺寸。默认 `786432` 约等于 `1024x768` 的像素预算。
+为了避免 4090 24G 在 2K/4K 直接推理时 OOM，`enhance_mode=flux` 会根据 `.env` 里的 `MAX_GENERATION_PIXELS` 先按比例生成安全尺寸，再放大到目标输出尺寸。默认 `786432` 约等于 `1024x768` 的像素预算。
+
+如果目标是视频高清、海报高清、字幕/商品图文字保真，建议不要用默认 FLUX 重绘，而是使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
 
 ## 安装
 
@@ -87,6 +91,28 @@ TOKENIZERS_PARALLELISM=false
 `MODEL_NAME` 是专门返回给 New API / OpenAI 兼容测试的模型名，默认 `flux-image-backend`；实际加载的 Hugging Face 模型仍由 `MODEL_PATH` 控制。
 
 `TOKENIZERS_PARALLELISM=false` 用于关闭 Hugging Face `tokenizers` 在多进程/fork 场景下的并行 warning，不影响图片生成结果。
+
+### 高清保真模式
+
+`.env` 可配置：
+
+```env
+DEFAULT_ENHANCE_MODE=flux
+FLUX_REFINE_STRENGTH=0.08
+REALESRGAN_MODEL_PATH=
+REALESRGAN_TILE=512
+```
+
+模式说明：
+
+| 模式 | 说明 | 文字一致性 |
+| --- | --- | --- |
+| `flux` | 当前默认：FLUX 图生图/文生图，适合创作和重绘 | 可能改变文字 |
+| `pixel` | 只用 Lanczos 像素放大，不进扩散模型 | 最稳定 |
+| `realesrgan` | 用 Real-ESRGAN 超分，失败前需安装依赖并配置权重路径 | 高 |
+| `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
+
+严格要求“字体、文字 100% 不变”时，优先 `pixel`；安装并配置 Real-ESRGAN 权重后可试 `realesrgan`。`realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
 
 ## 阿里云 OSS 输出
 
@@ -266,7 +292,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 
 ### 图片提升到 4K
 
-本地图片提升到 4K 推荐使用 `POST /v1/images/edits`，上传原图并指定 `aspect_ratio` + `resolution=4k`。提示词建议加入 `preserve the original composition`，降低重绘时构图漂移的概率。
+本地图片提升到 4K 推荐使用 `POST /v1/images/edits`，上传原图并指定 `aspect_ratio` + `resolution=4k`。如果要保持字幕、LOGO、商品包装、海报文字不变，请显式传 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
 
 16:9 横版 4K，输出 `3840x2160`：
 
@@ -276,6 +302,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "image=@input.png" ^
   -F "aspect_ratio=16:9" ^
   -F "resolution=4k" ^
+  -F "enhance_mode=pixel" ^
   -F "seed=0"
 ```
 
@@ -286,7 +313,18 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=Upscale to 4K, sharpen details, preserve original image" ^
   -F "image=@input.png" ^
   -F "size=3840x2160" ^
+  -F "enhance_mode=pixel" ^
   -F "seed=0"
+```
+
+Real-ESRGAN 权重已配置时可改为：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
+  -F "prompt=Upscale to 4K, preserve all text exactly" ^
+  -F "image=@input.png" ^
+  -F "size=3840x2160" ^
+  -F "enhance_mode=realesrgan"
 ```
 
 常用 4K 输出参数：
@@ -298,7 +336,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 | 手机竖图、短视频封面 | `aspect_ratio=9:16`、`resolution=4k` | `2160x3840` |
 | 老照片、证件比例 | `aspect_ratio=4:3`、`resolution=4k` | `4096x3072` |
 
-注意：当前实现是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；如果想尽量保持原图，请在 prompt 中明确写 `preserve original composition`、`preserve original subject`。
+注意：`enhance_mode=flux` 是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；如果想尽量保持原图，请使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
 
 ## 响应格式
 
