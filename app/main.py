@@ -37,6 +37,7 @@ class ImageGenerationRequest(BaseModel):
     model: Optional[str] = None
     task_id: Optional[str] = None
     prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
     image: Optional[str] = None
     n: int = Field(default=1, ge=1, le=1)
     size: Optional[str] = None
@@ -335,6 +336,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             model=_optional_str(form.get("model")),
             task_id=_optional_str(form.get("task_id")),
             prompt=str(form.get("prompt") or ""),
+            negative_prompt=_optional_str(form.get("negative_prompt")),
             image=image_value,
             n=int(form.get("n") or 1),
             size=_optional_str(form.get("size")),
@@ -406,6 +408,7 @@ async def _run_image_request(
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     image = await _service.generate(
         prompt=payload.prompt,
+        negative_prompt=payload.negative_prompt,
         image=reference_image,
         width=generation_width,
         height=generation_height,

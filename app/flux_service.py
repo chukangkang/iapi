@@ -18,6 +18,7 @@ class FluxImageService:
         self,
         *,
         prompt: str,
+        negative_prompt: Optional[str],
         image: Optional[Image.Image],
         width: int,
         height: int,
@@ -28,6 +29,7 @@ class FluxImageService:
         return await asyncio.to_thread(
             self._generate_sync,
             prompt=prompt,
+            negative_prompt=negative_prompt,
             image=image,
             width=width,
             height=height,
@@ -40,6 +42,7 @@ class FluxImageService:
         self,
         *,
         prompt: str,
+        negative_prompt: Optional[str],
         image: Optional[Image.Image],
         width: int,
         height: int,
@@ -58,6 +61,8 @@ class FluxImageService:
         }
         if image is not None:
             kwargs["image"] = image
+        if negative_prompt and "negative_prompt" in inspect.signature(pipe.__call__).parameters:
+            kwargs["negative_prompt"] = negative_prompt
         if strength is not None and "strength" in inspect.signature(pipe.__call__).parameters:
             kwargs["strength"] = strength
         if seed is not None:

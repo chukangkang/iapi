@@ -24,6 +24,7 @@
 | 字段 | 说明 | 默认值 |
 | --- | --- | --- |
 | `prompt` | 提示词，必填 | - |
+| `negative_prompt` | 反向词；仅在底层 FLUX pipeline 支持时生效 | `null` |
 | `image` | 可选参考图；存在时走 i2i/KV cache 流程 | `null` |
 | `size` | OpenAI 风格尺寸，如 `768x768`、`1024x1024` | `768x768` |
 | `aspect_ratio` | 主流比例预设：`16:9`、`4:3`、`1:1`、`9:16` | `null` |
