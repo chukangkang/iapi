@@ -3,6 +3,7 @@ import io
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -51,8 +52,19 @@ def string_to_image(value: Optional[str]) -> Optional[Image.Image]:
     parsed = urlparse(value)
     if parsed.scheme in {"http", "https"}:
         request = Request(value, headers={"User-Agent": "iapi-openai-image-server/1.0"})
-        with urlopen(request, timeout=30) as response:
-            return bytes_to_image(response.read())
+        try:
+            with urlopen(request, timeout=30) as response:
+                return bytes_to_image(response.read())
+        except URLError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to download image URL: {exc.reason}",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to download image URL: {exc}",
+            ) from exc
 
     try:
         return bytes_to_image(base64.b64decode(value, validate=True))

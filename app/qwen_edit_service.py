@@ -93,9 +93,15 @@ class QwenImageEditService:
             load_kwargs["torch_dtype"] = self._dtype
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
+        quantization_config = self._quantization_config()
+        if quantization_config is not None:
+            load_kwargs["quantization_config"] = quantization_config
+            load_kwargs["device_map"] = "auto"
 
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **load_kwargs)
-        if self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda"):
+        if quantization_config is not None:
+            pass
+        elif self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda"):
             pipe.enable_model_cpu_offload()
         else:
             pipe.to(self._device)
@@ -104,6 +110,18 @@ class QwenImageEditService:
 
         self._pipe = pipe
         return pipe
+
+    def _quantization_config(self):
+        if self.settings.qwen_edit_quantization == "none":
+            return None
+        try:
+            from transformers import BitsAndBytesConfig
+        except Exception as exc:
+            raise RuntimeError("QWEN_EDIT_QUANTIZATION requires bitsandbytes and a recent transformers version.") from exc
+
+        if self.settings.qwen_edit_quantization == "8bit":
+            return BitsAndBytesConfig(load_in_8bit=True)
+        return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self._dtype)
 
     def _resolve_device(self, torch) -> str:
         if self.settings.device != "auto":

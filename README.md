@@ -106,6 +106,7 @@ QWEN_EDIT_STEPS=4
 QWEN_EDIT_GUIDANCE_SCALE=1.0
 QWEN_EDIT_STRENGTH=0.7
 QWEN_EDIT_MAX_PIXELS=1048576
+QWEN_EDIT_QUANTIZATION=none
 PIXEL_SHARPEN_ENABLED=true
 PIXEL_SHARPEN_RADIUS=1.4
 PIXEL_SHARPEN_PERCENT=140
@@ -133,6 +134,8 @@ REALESRGAN_TILE=512
 如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`flux` 和 `realesrgan_flux` 都会进入扩散模型，没有像素级一致性保证。
 
 如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit` 或 `enhance_mode=qwen_edit_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
+
+4090 24G 显存紧张时可开启 Qwen Edit 量化：`QWEN_EDIT_QUANTIZATION=8bit`。更省显存可试 `4bit`，但速度和画质可能波动；量化依赖 Linux 下的 `bitsandbytes`，默认 `none` 不启用。
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
 
