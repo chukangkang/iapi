@@ -96,7 +96,7 @@ class QwenImageEditService:
         quantization_config = self._quantization_config(diffusers)
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
-            load_kwargs["device_map"] = "auto"
+            load_kwargs["device_map"] = self.settings.qwen_edit_device_map
 
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **load_kwargs)
         if quantization_config is not None:
