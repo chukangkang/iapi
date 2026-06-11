@@ -1,5 +1,6 @@
 import time
 import uuid
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -29,6 +30,8 @@ SIZE_PRESETS = {
     ("9:16", "4k"): (2160, 3840),
 }
 
+PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|aspect_ratio|resolution|size|width|height)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
+
 
 class ImageGenerationRequest(BaseModel):
     model: Optional[str] = None
@@ -52,6 +55,7 @@ class ImageData(BaseModel):
     url: Optional[str] = None
     b64_json: Optional[str] = None
     revised_prompt: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ImageResponse(BaseModel):
@@ -346,6 +350,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
         )
         if reference_image is None:
             reference_image = string_to_image(payload.image)
+        _apply_prompt_params(payload)
         return payload, reference_image
 
     try:
@@ -353,6 +358,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Request body must be JSON or form data") from exc
     payload = ImageGenerationRequest.model_validate(body)
+    _apply_prompt_params(payload)
     return payload, string_to_image(payload.image)
 
 
@@ -366,6 +372,13 @@ async def _run_image_request(
 
     output_width, output_height = _resolve_dimensions(payload, app_settings)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
+    metadata = {
+        "enhance_mode": enhance_mode,
+        "target_width": output_width,
+        "target_height": output_height,
+        "source_width": reference_image.width if reference_image is not None else None,
+        "source_height": reference_image.height if reference_image is not None else None,
+    }
 
     if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
@@ -376,7 +389,9 @@ async def _run_image_request(
             method=upscale_method,
         )
         if enhance_mode != "realesrgan_flux":
-            return _image_response(image, payload)
+            metadata["output_width"] = image.width
+            metadata["output_height"] = image.height
+            return _image_response(image, payload, metadata)
 
         reference_image = image
 
@@ -393,11 +408,13 @@ async def _run_image_request(
     if image.size != (output_width, output_height):
         image = image.resize((output_width, output_height))
 
-    return _image_response(image, payload)
+    metadata["output_width"] = image.width
+    metadata["output_height"] = image.height
+    return _image_response(image, payload, metadata)
 
 
-def _image_response(image, payload: ImageGenerationRequest) -> ImageResponse:
-    data = ImageData(revised_prompt=payload.prompt)
+def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[dict[str, Any]] = None) -> ImageResponse:
+    data = ImageData(revised_prompt=payload.prompt, metadata=metadata or {})
     if payload.response_format == "b64_json":
         data.b64_json = image_to_base64_png(image)
     else:
@@ -474,6 +491,26 @@ def _resolve_generation_dimensions(output_width: int, output_height: int, app_se
 
 def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
     return payload.enhance_mode or app_settings.default_enhance_mode
+
+
+def _apply_prompt_params(payload: ImageGenerationRequest) -> None:
+    if not payload.prompt:
+        return
+    for match in PROMPT_PARAM_PATTERN.finditer(payload.prompt):
+        key = match.group("key").lower()
+        value = match.group("value").strip().strip('"\'')
+        if key == "enhance_mode" and not payload.enhance_mode:
+            payload.enhance_mode = value.lower()
+        elif key == "aspect_ratio" and not payload.aspect_ratio:
+            payload.aspect_ratio = value
+        elif key == "resolution" and not payload.resolution:
+            payload.resolution = value.lower()
+        elif key == "size" and not payload.size:
+            payload.size = value
+        elif key == "width" and payload.width is None:
+            payload.width = int(value)
+        elif key == "height" and payload.height is None:
+            payload.height = int(value)
 
 
 def _normalize_aspect_ratio(value: str) -> str:

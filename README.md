@@ -298,6 +298,15 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -d "{\"prompt\":\"Upscale to 4K, sharpen details, preserve original image\",\"image\":\"https://example.com/input.png\",\"aspect_ratio\":\"16:9\",\"resolution\":\"4k\",\"enhance_mode\":\"pixel\",\"seed\":0}"
 ```
 
+如果通过 New API 等 OpenAI 兼容网关转发，网关可能会过滤 `enhance_mode`、`aspect_ratio`、`resolution` 这类非标准字段。此时可把参数同时写进 `prompt`，后端会从 prompt 中兜底解析：
+
+```json
+{
+  "prompt": "Upscale to 4K, sharpen details, preserve original image [enhance_mode=pixel aspect_ratio=16:9 resolution=4k]",
+  "image": "https://example.com/input.png"
+}
+```
+
 ### 图片提升到 4K
 
 本地图片提升到 4K 推荐使用 `POST /v1/images/edits`，上传原图并指定 `aspect_ratio` + `resolution=4k`。如果要保持字幕、LOGO、商品包装、海报文字不变，请显式传 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
@@ -357,7 +366,14 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
     {
       "url": "/outputs/example.png",
       "b64_json": null,
-      "revised_prompt": "A cat holding a sign that says hello world"
+      "revised_prompt": "A cat holding a sign that says hello world",
+      "metadata": {
+        "enhance_mode": "pixel",
+        "target_width": 3840,
+        "target_height": 2160,
+        "output_width": 3840,
+        "output_height": 2160
+      }
     }
   ]
 }
