@@ -33,7 +33,7 @@
 | `num_inference_steps` | 推理步数 | `4` |
 | `seed` | 随机种子 | `null` |
 | `response_format` | `url` 或 `b64_json` | `url` |
-| `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux` | `.env` 默认值 |
+| `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan` | `.env` 默认值 |
 | `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
 | `n` | 当前仅支持 `1` | `1` |
 
@@ -100,6 +100,12 @@ TOKENIZERS_PARALLELISM=false
 ```env
 DEFAULT_ENHANCE_MODE=flux
 FLUX_REFINE_STRENGTH=0.08
+QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit
+QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPipeline
+QWEN_EDIT_STEPS=4
+QWEN_EDIT_GUIDANCE_SCALE=1.0
+QWEN_EDIT_STRENGTH=0.7
+QWEN_EDIT_MAX_PIXELS=1048576
 PIXEL_SHARPEN_ENABLED=true
 PIXEL_SHARPEN_RADIUS=1.4
 PIXEL_SHARPEN_PERCENT=140
@@ -121,8 +127,12 @@ REALESRGAN_TILE=512
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
 | `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖目标尺寸，再缩放到 4K，不进 FLUX | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
+| `qwen_edit` | Python 直接加载 Qwen Image Edit 做高清编辑，再像素放大到目标尺寸 | 中 |
+| `qwen_edit_realesrgan` | Qwen Image Edit 高清编辑后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
 
 如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`flux` 和 `realesrgan_flux` 都会进入扩散模型，没有像素级一致性保证。
+
+如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit` 或 `enhance_mode=qwen_edit_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
 
@@ -408,6 +418,22 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 ```
 
 `flux_refine_strength` 越低越接近原图，越高越清晰但越容易改内容。建议从 `0.05`–`0.12` 试起；如果文字变化明显，降低到 `0.03`–`0.06`。
+
+如果希望用 Python 复刻类似 ComfyUI 工作流的 Qwen Image Edit 高清链路，可以使用：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
+  -F "prompt=使模糊的图片修复高清，噪声去除，纹理自然，皮肤自然，保持人物一致性，保持文字尽量一致" ^
+  -F "image=@input.png" ^
+  -F "aspect_ratio=16:9" ^
+  -F "resolution=4k" ^
+  -F "enhance_mode=qwen_edit_realesrgan" ^
+  -F "qwen_edit_strength=0.7" ^
+  -F "upscale_fit_mode=cover" ^
+  -F "seed=0"
+```
+
+`qwen_edit_strength` 越高，编辑修复越明显，但越可能改变原图；建议先用 `0.5`–`0.7`，人物或文字变化明显时降低。
 
 ## 响应格式
 

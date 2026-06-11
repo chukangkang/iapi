@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from app.config import Settings, get_settings
 from app.flux_service import FluxImageService
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
+from app.qwen_edit_service import QwenImageEditService
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
 from app.upscale_service import ImageUpscaleService, realesrgan_available, realesrgan_import_error
@@ -30,7 +31,7 @@ SIZE_PRESETS = {
     ("9:16", "4k"): (2160, 3840),
 }
 
-PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
+PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height|qwen_edit_strength)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
 
 
 class ImageGenerationRequest(BaseModel):
@@ -51,6 +52,7 @@ class ImageGenerationRequest(BaseModel):
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
     flux_refine_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    qwen_edit_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class ImageData(BaseModel):
@@ -103,6 +105,7 @@ settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
 _service = FluxImageService(settings)
+_qwen_edit_service = QwenImageEditService(settings)
 _upscale_service = ImageUpscaleService(settings)
 _storage = ImageStorage(settings)
 
@@ -351,6 +354,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             enhance_mode=_optional_str(form.get("enhance_mode")),
             upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
             flux_refine_strength=_optional_float(form.get("flux_refine_strength")),
+            qwen_edit_strength=_optional_float(form.get("qwen_edit_strength")),
         )
         if reference_image is None:
             reference_image = string_to_image(payload.image)
@@ -389,9 +393,39 @@ async def _run_image_request(
     if enhance_mode == "pixel":
         metadata["pixel_sharpen_enabled"] = app_settings.pixel_sharpen_enabled
         metadata["pixel_sharpen_percent"] = app_settings.pixel_sharpen_percent
-    if enhance_mode in {"realesrgan", "realesrgan_flux"}:
+    if enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan"}:
         metadata["realesrgan_max_passes"] = app_settings.realesrgan_max_passes
         metadata["realesrgan_denoise_strength"] = app_settings.realesrgan_denoise_strength
+
+    if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan"}:
+        generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
+        qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
+        metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
+        metadata["qwen_edit_strength"] = qwen_strength
+        metadata["qwen_edit_width"] = generation_width
+        metadata["qwen_edit_height"] = generation_height
+        image = await _qwen_edit_service.edit(
+            prompt=payload.prompt,
+            negative_prompt=payload.negative_prompt,
+            image=reference_image,
+            width=generation_width,
+            height=generation_height,
+            num_inference_steps=payload.num_inference_steps or app_settings.qwen_edit_steps,
+            seed=payload.seed,
+            guidance_scale=app_settings.qwen_edit_guidance_scale,
+            strength=qwen_strength,
+        )
+        upscale_method = "realesrgan" if enhance_mode == "qwen_edit_realesrgan" else "pixel"
+        image = await _upscale_service.upscale(
+            image,
+            width=output_width,
+            height=output_height,
+            method=upscale_method,
+            fit_mode=upscale_fit_mode,
+        )
+        metadata["output_width"] = image.width
+        metadata["output_height"] = image.height
+        return _image_response(image, payload, metadata)
 
     if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
@@ -452,22 +486,27 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if payload.response_format not in {"url", "b64_json"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
-    if payload.enhance_mode and payload.enhance_mode not in {"flux", "pixel", "realesrgan", "realesrgan_flux"}:
+    if payload.enhance_mode and payload.enhance_mode not in {"flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="enhance_mode must be one of: flux, pixel, realesrgan, realesrgan_flux",
+            detail="enhance_mode must be one of: flux, pixel, realesrgan, realesrgan_flux, qwen_edit, qwen_edit_realesrgan",
         )
     if payload.upscale_fit_mode and payload.upscale_fit_mode not in {"stretch", "contain", "cover"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="upscale_fit_mode must be one of: stretch, contain, cover",
         )
-    if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not realesrgan_available():
+    if payload.enhance_mode in {"qwen_edit", "qwen_edit_realesrgan"} and not payload.image:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image is required for enhance_mode=qwen_edit or qwen_edit_realesrgan.",
+        )
+    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan"} and not realesrgan_available():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Real-ESRGAN dependencies cannot be imported. Install/fix realesrgan and basicsr, or use enhance_mode=pixel. Import error: {realesrgan_import_error()}",
         )
-    if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not app_settings.realesrgan_model_path.strip():
+    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan"} and not app_settings.realesrgan_model_path.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="REALESRGAN_MODEL_PATH is required for enhance_mode=realesrgan or realesrgan_flux.",
@@ -509,6 +548,17 @@ def _resolve_generation_dimensions(output_width: int, output_height: int, app_se
     return width, height
 
 
+def _resolve_qwen_edit_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:
+    output_pixels = output_width * output_height
+    if output_pixels <= app_settings.qwen_edit_max_pixels:
+        return _multiple_of_16(output_width), _multiple_of_16(output_height)
+
+    scale = (app_settings.qwen_edit_max_pixels / output_pixels) ** 0.5
+    width = max(64, _multiple_of_16(output_width * scale))
+    height = max(64, _multiple_of_16(output_height * scale))
+    return width, height
+
+
 def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
     return payload.enhance_mode or app_settings.default_enhance_mode
 
@@ -527,6 +577,8 @@ def _apply_prompt_params(payload: ImageGenerationRequest) -> None:
             payload.enhance_mode = value.lower()
         elif key == "upscale_fit_mode" and not payload.upscale_fit_mode:
             payload.upscale_fit_mode = value.lower()
+        elif key == "qwen_edit_strength" and payload.qwen_edit_strength is None:
+            payload.qwen_edit_strength = float(value)
         elif key == "aspect_ratio" and not payload.aspect_ratio:
             payload.aspect_ratio = value
         elif key == "resolution" and not payload.resolution:
