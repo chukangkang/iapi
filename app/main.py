@@ -378,6 +378,8 @@ async def _run_image_request(
         "target_height": output_height,
         "source_width": reference_image.width if reference_image is not None else None,
         "source_height": reference_image.height if reference_image is not None else None,
+        "upscale_fit_mode": app_settings.upscale_fit_mode,
+        "upscale_fill_color": app_settings.upscale_fill_color,
     }
     if enhance_mode == "pixel":
         metadata["pixel_sharpen_enabled"] = app_settings.pixel_sharpen_enabled

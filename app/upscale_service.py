@@ -32,7 +32,7 @@ class ImageUpscaleService:
             upscaled = self._realesrgan_upscale(image, width=width, height=height)
             if upscaled is not None:
                 return upscaled
-        upscaled = image.resize((width, height), Image.Resampling.LANCZOS)
+        upscaled = self._fit_to_target(image, width=width, height=height)
         return self._sharpen_pixel_upscale(upscaled) if method == "pixel" else upscaled
 
     def _sharpen_pixel_upscale(self, image: Image.Image) -> Image.Image:
@@ -65,7 +65,36 @@ class ImageUpscaleService:
             upscaled = Image.fromarray(output).convert("RGB")
             if upscaled.width >= width and upscaled.height >= height:
                 break
-        return upscaled.resize((width, height), Image.Resampling.LANCZOS)
+        return self._fit_to_target(upscaled, width=width, height=height)
+
+    def _fit_to_target(self, image: Image.Image, *, width: int, height: int) -> Image.Image:
+        if self.settings.upscale_fit_mode == "stretch":
+            return image.resize((width, height), Image.Resampling.LANCZOS)
+
+        source_ratio = image.width / image.height
+        target_ratio = width / height
+        if self.settings.upscale_fit_mode == "cover":
+            if source_ratio > target_ratio:
+                resized_height = height
+                resized_width = int(round(height * source_ratio))
+            else:
+                resized_width = width
+                resized_height = int(round(width / source_ratio))
+            resized = image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+            left = max(0, (resized_width - width) // 2)
+            top = max(0, (resized_height - height) // 2)
+            return resized.crop((left, top, left + width, top + height))
+
+        if source_ratio > target_ratio:
+            resized_width = width
+            resized_height = int(round(width / source_ratio))
+        else:
+            resized_height = height
+            resized_width = int(round(height * source_ratio))
+        resized = image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (width, height), self.settings.upscale_fill_color)
+        canvas.paste(resized, ((width - resized_width) // 2, (height - resized_height) // 2))
+        return canvas
 
     def _resolve_realesrgan_model_path(self) -> Optional[Path]:
         raw_model_path = self.settings.realesrgan_model_path.strip()

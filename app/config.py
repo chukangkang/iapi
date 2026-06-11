@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     pixel_sharpen_radius: float = Field(default=1.4, ge=0.0)
     pixel_sharpen_percent: int = Field(default=140, ge=0)
     pixel_sharpen_threshold: int = Field(default=3, ge=0)
+    upscale_fit_mode: Literal["stretch", "contain", "cover"] = "contain"
+    upscale_fill_color: str = "black"
     realesrgan_model_path: str = ""
     realesrgan_model_name: str = "realesr-general-x4v3.pth"
     realesrgan_max_passes: int = Field(default=2, ge=1, le=4)
