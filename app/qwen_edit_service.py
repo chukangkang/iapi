@@ -117,8 +117,14 @@ class QwenImageEditService:
         pipeline_quantization_config = getattr(diffusers, "PipelineQuantizationConfig", None)
         if pipeline_quantization_config is not None:
             if self.settings.qwen_edit_quantization == "8bit":
-                return pipeline_quantization_config(quant_backend="bitsandbytes_8bit")
-            return pipeline_quantization_config(quant_backend="bitsandbytes_4bit", quant_kwargs={"bnb_4bit_compute_dtype": self._dtype})
+                return pipeline_quantization_config(
+                    quant_backend="bitsandbytes_8bit",
+                    quant_kwargs={"load_in_8bit": True},
+                )
+            return pipeline_quantization_config(
+                quant_backend="bitsandbytes_4bit",
+                quant_kwargs={"load_in_4bit": True, "bnb_4bit_compute_dtype": self._dtype},
+            )
 
         try:
             from transformers import BitsAndBytesConfig
