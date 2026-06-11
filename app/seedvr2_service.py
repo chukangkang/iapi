@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -149,9 +150,18 @@ class SeedVR2Service:
         if completed.returncode != 0:
             stdout = completed.stdout[-4000:] if completed.stdout else ""
             stderr = completed.stderr[-4000:] if completed.stderr else ""
+            missing_module_match = re.search(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]", stderr)
+            install_hint = ""
+            if missing_module_match:
+                missing_module = missing_module_match.group(1)
+                install_hint = (
+                    f"\nMissing Python package: {missing_module}. "
+                    "Install SeedVR extras in the same environment that runs this API: "
+                    f"{sys.executable} -m pip install -r requirements-seedvr.txt"
+                )
             raise RuntimeError(
                 "SeedVR2 official inference failed. "
-                f"Command: {' '.join(command)}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+                f"Command: {' '.join(command)}{install_hint}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
             )
 
     def _find_output_image(self, output_dir: Path, input_filename: str) -> Path:

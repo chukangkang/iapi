@@ -1,0 +1,8 @@
+# Extra dependencies required by the local SeedVR2 official inference script.
+# Install these in the same Python environment that runs the FastAPI service.
+mediapy==1.2.0
+einops==0.7.0
+omegaconf==2.3.0
+rotary-embedding-torch==0.5.3
+torchvision>=0.18.0
+opencv-python>=4.9.0

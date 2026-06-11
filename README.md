@@ -188,6 +188,14 @@ Windows：
 
 下载完成后，`SEEDVR2_REPO_PATH` 必须填写服务端机器上的真实路径。例如本地 Windows 可以是 `e:\sd\iapi\SeedVR`，Linux 服务器通常应改成 `/root/xinglin-data/chat/iapi/SeedVR` 或你的实际部署目录。不要把本机 Windows 路径直接用于 Linux 服务端。
 
+SeedVR2 官方脚本还有一组额外 Python 依赖，需要安装到运行 FastAPI 的同一个环境里，否则会出现 `ModuleNotFoundError: No module named 'mediapy'` 这类错误：
+
+```bash
+python -m pip install -r requirements-seedvr.txt
+```
+
+如果你使用独立 conda 环境运行服务，请先激活该环境再安装。SeedVR 官方推荐 Python 3.9/3.10；Python 3.12 下部分包可能需要额外适配，尤其是 `flash-attn` / `apex`。
+
 SeedVR2 服务器示例：
 
 ```env
