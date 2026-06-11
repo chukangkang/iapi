@@ -23,16 +23,24 @@ class ImageUpscaleService:
         width: int,
         height: int,
         method: str,
+        fit_mode: str,
     ) -> Image.Image:
-        return await asyncio.to_thread(self._upscale_sync, image, width=width, height=height, method=method)
+        return await asyncio.to_thread(
+            self._upscale_sync,
+            image,
+            width=width,
+            height=height,
+            method=method,
+            fit_mode=fit_mode,
+        )
 
-    def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str) -> Image.Image:
+    def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str, fit_mode: str) -> Image.Image:
         image = image.convert("RGB")
         if method == "realesrgan":
-            upscaled = self._realesrgan_upscale(image, width=width, height=height)
+            upscaled = self._realesrgan_upscale(image, width=width, height=height, fit_mode=fit_mode)
             if upscaled is not None:
                 return upscaled
-        upscaled = self._fit_to_target(image, width=width, height=height)
+        upscaled = self._fit_to_target(image, width=width, height=height, fit_mode=fit_mode)
         return self._sharpen_pixel_upscale(upscaled) if method == "pixel" else upscaled
 
     def _sharpen_pixel_upscale(self, image: Image.Image) -> Image.Image:
@@ -46,7 +54,7 @@ class ImageUpscaleService:
             )
         )
 
-    def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int) -> Optional[Image.Image]:
+    def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int, fit_mode: str) -> Optional[Image.Image]:
         model_path = self._resolve_realesrgan_model_path()
         if model_path is None:
             return None
@@ -65,15 +73,15 @@ class ImageUpscaleService:
             upscaled = Image.fromarray(output).convert("RGB")
             if upscaled.width >= width and upscaled.height >= height:
                 break
-        return self._fit_to_target(upscaled, width=width, height=height)
+        return self._fit_to_target(upscaled, width=width, height=height, fit_mode=fit_mode)
 
-    def _fit_to_target(self, image: Image.Image, *, width: int, height: int) -> Image.Image:
-        if self.settings.upscale_fit_mode == "stretch":
+    def _fit_to_target(self, image: Image.Image, *, width: int, height: int, fit_mode: str) -> Image.Image:
+        if fit_mode == "stretch":
             return image.resize((width, height), Image.Resampling.LANCZOS)
 
         source_ratio = image.width / image.height
         target_ratio = width / height
-        if self.settings.upscale_fit_mode == "cover":
+        if fit_mode == "cover":
             if source_ratio > target_ratio:
                 resized_height = height
                 resized_width = int(round(height * source_ratio))

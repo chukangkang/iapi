@@ -30,7 +30,7 @@ SIZE_PRESETS = {
     ("9:16", "4k"): (2160, 3840),
 }
 
-PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|aspect_ratio|resolution|size|width|height)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
+PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
 
 
 class ImageGenerationRequest(BaseModel):
@@ -49,6 +49,7 @@ class ImageGenerationRequest(BaseModel):
     seed: Optional[int] = None
     response_format: str = "url"
     enhance_mode: Optional[str] = None
+    upscale_fit_mode: Optional[str] = None
     flux_refine_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
@@ -348,6 +349,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             seed=_optional_int(form.get("seed")),
             response_format=_optional_str(form.get("response_format")) or "url",
             enhance_mode=_optional_str(form.get("enhance_mode")),
+            upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
             flux_refine_strength=_optional_float(form.get("flux_refine_strength")),
         )
         if reference_image is None:
@@ -374,13 +376,14 @@ async def _run_image_request(
 
     output_width, output_height = _resolve_dimensions(payload, app_settings)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
+    upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
     metadata = {
         "enhance_mode": enhance_mode,
         "target_width": output_width,
         "target_height": output_height,
         "source_width": reference_image.width if reference_image is not None else None,
         "source_height": reference_image.height if reference_image is not None else None,
-        "upscale_fit_mode": app_settings.upscale_fit_mode,
+        "upscale_fit_mode": upscale_fit_mode,
         "upscale_fill_color": app_settings.upscale_fill_color,
     }
     if enhance_mode == "pixel":
@@ -397,6 +400,7 @@ async def _run_image_request(
             width=output_width,
             height=output_height,
             method=upscale_method,
+            fit_mode=upscale_fit_mode,
         )
         if enhance_mode != "realesrgan_flux":
             metadata["output_width"] = image.width
@@ -453,6 +457,11 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="enhance_mode must be one of: flux, pixel, realesrgan, realesrgan_flux",
         )
+    if payload.upscale_fit_mode and payload.upscale_fit_mode not in {"stretch", "contain", "cover"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="upscale_fit_mode must be one of: stretch, contain, cover",
+        )
     if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not realesrgan_available():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -504,6 +513,10 @@ def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Setting
     return payload.enhance_mode or app_settings.default_enhance_mode
 
 
+def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
+    return payload.upscale_fit_mode or app_settings.upscale_fit_mode
+
+
 def _apply_prompt_params(payload: ImageGenerationRequest) -> None:
     if not payload.prompt:
         return
@@ -512,6 +525,8 @@ def _apply_prompt_params(payload: ImageGenerationRequest) -> None:
         value = match.group("value").strip().strip('"\'')
         if key == "enhance_mode" and not payload.enhance_mode:
             payload.enhance_mode = value.lower()
+        elif key == "upscale_fit_mode" and not payload.upscale_fit_mode:
+            payload.upscale_fit_mode = value.lower()
         elif key == "aspect_ratio" and not payload.aspect_ratio:
             payload.aspect_ratio = value
         elif key == "resolution" and not payload.resolution:

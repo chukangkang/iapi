@@ -104,7 +104,7 @@ PIXEL_SHARPEN_ENABLED=true
 PIXEL_SHARPEN_RADIUS=1.4
 PIXEL_SHARPEN_PERCENT=140
 PIXEL_SHARPEN_THRESHOLD=3
-UPSCALE_FIT_MODE=contain
+UPSCALE_FIT_MODE=cover
 UPSCALE_FILL_COLOR=black
 REALESRGAN_MODEL_PATH=
 REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
@@ -126,7 +126,7 @@ REALESRGAN_TILE=512
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
 
-`UPSCALE_FIT_MODE=contain` 会保持原图比例并补边到目标 4K，避免把接近 16:9 但不是标准 16:9 的图片强行拉伸，导致文字变形。可选值：`contain` 保比例补边、`cover` 保比例裁切、`stretch` 强制拉伸。
+`UPSCALE_FIT_MODE=cover` 会保持原图比例并居中裁剪到目标 4K，避免黑边，也避免强行拉伸导致字体变形。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。高清输出推荐保持 `cover`。
 
 当前 `realesrgan` Python 推理包需要 `.pth` 权重，不能直接加载 Hugging Face/Qualcomm 目录里的 `model.safetensors`。推荐下载最新版通用小模型 `realesr-general-x4v3.pth`，文字/视频高清场景先用它；`realesr-general-wdn-x4v3.pth` 是强降噪搭配权重，可选下载到同一目录。
 
@@ -327,6 +327,15 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -d "{\"prompt\":\"Upscale to 4K, sharpen details, preserve original image\",\"image\":\"https://example.com/input.png\",\"aspect_ratio\":\"16:9\",\"resolution\":\"4k\",\"enhance_mode\":\"pixel\",\"seed\":0}"
 ```
 
+不要黑边时传 `upscale_fit_mode=cover`，后端会保持比例并居中裁剪：
+
+```json
+{
+  "prompt": "使模糊的图片修复高清，保持人物和文字一致 [enhance_mode=realesrgan aspect_ratio=16:9 resolution=4k upscale_fit_mode=cover]",
+  "image": "https://example.com/input.png"
+}
+```
+
 如果通过 New API 等 OpenAI 兼容网关转发，网关可能会过滤 `enhance_mode`、`aspect_ratio`、`resolution` 这类非标准字段。此时可把参数同时写进 `prompt`，后端会从 prompt 中兜底解析：
 
 ```json
@@ -370,7 +379,8 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=Upscale to 4K, preserve all text exactly" ^
   -F "image=@input.png" ^
   -F "size=3840x2160" ^
-  -F "enhance_mode=realesrgan"
+  -F "enhance_mode=realesrgan" ^
+  -F "upscale_fit_mode=cover"
 ```
 
 常用 4K 输出参数：
