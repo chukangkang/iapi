@@ -172,6 +172,22 @@ SEEDVR2_LATENT_NOISE_SCALE=0.0
 
 当前后端已内置 SeedVR2 桥接逻辑：请求进入 `enhance_mode=seedvr2` 或 `enhance_mode=qwen_edit_seedvr2` 后，会把输入图保存到临时目录，在本地 `SeedVR` 代码仓库里执行官方 `projects/inference_seedvr2_3b.py`，再读取输出图片返回。运行过程不访问外链，但首次执行会加载完整 SeedVR2 模型，耗时和显存占用都比较高。
 
+如果服务端没有 `SeedVR/` 文件夹，需要先在服务端项目根目录下载完整官方代码仓库：
+
+Linux：
+
+```bash
+bash scripts/download_seedvr.sh
+```
+
+Windows：
+
+```powershell
+.\scripts\download_seedvr.ps1
+```
+
+下载完成后，`SEEDVR2_REPO_PATH` 必须填写服务端机器上的真实路径。例如本地 Windows 可以是 `e:\sd\iapi\SeedVR`，Linux 服务器通常应改成 `/root/xinglin-data/chat/iapi/SeedVR` 或你的实际部署目录。不要把本机 Windows 路径直接用于 Linux 服务端。
+
 SeedVR2 服务器示例：
 
 ```env
