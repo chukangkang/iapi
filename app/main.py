@@ -213,55 +213,19 @@ def _chat_completion_stream(model_name: str, created: str, content: str):
 @app.post("/v1/images/generations")
 @app.post("/v1/images/generations/")
 async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)):
-    payload = await _parse_generation_request(request)
+    payload, reference_image = await _parse_image_request(request)
     query_task_id = payload.task_id or _task_id_from_prompt(payload.prompt)
     if query_task_id:
         return await _get_image_task_response(query_task_id)
-    reference_image = string_to_image(payload.image)
     return await _submit_image_task(payload, reference_image, app_settings)
 
 
 @app.post("/v1/images/edits", response_model=ImageTaskResponse)
 @app.post("/v1/images/edits/", response_model=ImageTaskResponse)
-async def create_image_edit(
-    prompt: str = Form(...),
-    image: UploadFile = File(...),
-    mask: Optional[UploadFile] = File(default=None),
-    model: Optional[str] = Form(default=None),
-    n: int = Form(default=1),
-    size: Optional[str] = Form(default=None),
-    width: Optional[int] = Form(default=None),
-    height: Optional[int] = Form(default=None),
-    aspect_ratio: Optional[str] = Form(default=None),
-    resolution: Optional[str] = Form(default=None),
-    num_inference_steps: Optional[int] = Form(default=None),
-    seed: Optional[int] = Form(default=None),
-    response_format: str = Form(default="url"),
-    enhance_mode: Optional[str] = Form(default=None),
-    flux_refine_strength: Optional[float] = Form(default=None),
-    app_settings: Settings = Depends(get_settings),
-) -> ImageTaskResponse:
-    if n != 1:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
-    if mask is not None:
-        await mask.read()
-
-    payload = ImageGenerationRequest(
-        model=model,
-        prompt=prompt,
-        n=n,
-        size=size,
-        aspect_ratio=aspect_ratio,
-        resolution=resolution,
-        width=width,
-        height=height,
-        num_inference_steps=num_inference_steps,
-        seed=seed,
-        response_format=response_format,
-        enhance_mode=enhance_mode,
-        flux_refine_strength=flux_refine_strength,
-    )
-    reference_image = await upload_file_to_image(image)
+async def create_image_edit(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageTaskResponse:
+    payload, reference_image = await _parse_image_request(request)
+    if reference_image is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image is required")
     return await _submit_image_task(payload, reference_image, app_settings)
 
 
@@ -344,16 +308,26 @@ def _task_metadata_to_result_response(task: dict[str, Any]) -> ImageTaskResultRe
 
 
 async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
+    payload, _ = await _parse_image_request(request)
+    return payload
+
+
+async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest, Optional[Any]]:
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data") or content_type.startswith("application/x-www-form-urlencoded"):
         form = await request.form()
         image_file = form.get("image")
         image_value = form.get("image") if isinstance(form.get("image"), str) else None
+        reference_image = None
         if hasattr(image_file, "read"):
-            image = await upload_file_to_image(image_file)
-            image_value = image_to_base64_png(image) if image is not None else None
+            reference_image = await upload_file_to_image(image_file)
+            image_value = image_to_base64_png(reference_image) if reference_image is not None else None
 
-        return ImageGenerationRequest(
+        mask = form.get("mask")
+        if hasattr(mask, "read"):
+            await mask.read()
+
+        payload = ImageGenerationRequest(
             model=_optional_str(form.get("model")),
             task_id=_optional_str(form.get("task_id")),
             prompt=str(form.get("prompt") or ""),
@@ -370,12 +344,16 @@ async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
             enhance_mode=_optional_str(form.get("enhance_mode")),
             flux_refine_strength=_optional_float(form.get("flux_refine_strength")),
         )
+        if reference_image is None:
+            reference_image = string_to_image(payload.image)
+        return payload, reference_image
 
     try:
         body: dict[str, Any] = await request.json()
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Request body must be JSON or form data") from exc
-    return ImageGenerationRequest.model_validate(body)
+    payload = ImageGenerationRequest.model_validate(body)
+    return payload, string_to_image(payload.image)
 
 
 async def _run_image_request(

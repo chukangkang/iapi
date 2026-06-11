@@ -40,10 +40,10 @@
 
 异步提交图片编辑任务，立即返回任务 ID。后台 worker 会按队列执行 GPU 推理。
 
-使用 multipart 表单，字段与 OpenAI 图片编辑接口接近：
+支持 `application/json` 图片 URL/base64，也支持 multipart 表单文件上传，字段与 OpenAI 图片编辑接口接近：
 
 - `prompt`：必填
-- `image`：必填，参考/待编辑图片
+- `image`：必填，JSON 中可传图片 URL/base64，multipart 中可传文件
 - `mask`：可选；当前接口会接收但 FLUX.2 Klein KV 示例未使用 mask，因此暂不参与推理
 - 其他参数同 generations
 
@@ -288,6 +288,14 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "image=@input.png" ^
   -F "size=768x768" ^
   -F "seed=0"
+```
+
+### 图片编辑 JSON（图片 URL）
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
+  -H "Content-Type: application/json" ^
+  -d "{\"prompt\":\"Upscale to 4K, sharpen details, preserve original image\",\"image\":\"https://example.com/input.png\",\"aspect_ratio\":\"16:9\",\"resolution\":\"4k\",\"enhance_mode\":\"pixel\",\"seed\":0}"
 ```
 
 ### 图片提升到 4K
