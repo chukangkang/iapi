@@ -4,5 +4,6 @@ mediapy==1.2.0
 einops==0.7.0
 omegaconf==2.3.0
 rotary-embedding-torch==0.5.3
+beartype>=0.18.5
 torchvision>=0.18.0
 opencv-python>=4.9.0

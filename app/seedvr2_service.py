@@ -159,10 +159,18 @@ class SeedVR2Service:
         seed: Optional[int],
     ) -> None:
         env = os.environ.copy()
+        python_path = Path(sys.executable).resolve()
+        python_bin_dir = python_path.parent
+        env_prefix = python_bin_dir.parent
         existing_pythonpath = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = str(repo_path) if not existing_pythonpath else f"{repo_path}{os.pathsep}{existing_pythonpath}"
+        existing_path = env.get("PATH", "")
+        env["PATH"] = str(python_bin_dir) if not existing_path else f"{python_bin_dir}{os.pathsep}{existing_path}"
+        env.setdefault("VIRTUAL_ENV", str(env_prefix))
+        env.setdefault("CONDA_PREFIX", str(env_prefix))
+        env.setdefault("PYTHONNOUSERSITE", "1")
         command = [
-            sys.executable,
+            str(python_path),
             "-m",
             "torch.distributed.run",
             "--nproc-per-node=1",
@@ -210,7 +218,7 @@ class SeedVR2Service:
                     )
             raise RuntimeError(
                 "SeedVR2 official inference failed. "
-                f"Command: {' '.join(command)}{install_hint}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+                f"Command: {' '.join(command)}\nPython: {python_path}\nEnv prefix: {env_prefix}{install_hint}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
             )
 
     def _find_output_image(self, output_dir: Path, input_filename: str) -> Path:
