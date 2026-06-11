@@ -34,7 +34,7 @@
 | `seed` | 随机种子 | `null` |
 | `response_format` | `url` 或 `b64_json` | `url` |
 | `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux` | `.env` 默认值 |
-| `flux_refine_strength` | `realesrgan_flux` 时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
+| `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
 | `n` | 当前仅支持 `1` | `1` |
 
 ### `POST /v1/images/edits`
@@ -117,12 +117,12 @@ REALESRGAN_TILE=512
 
 | 模式 | 说明 | 文字一致性 |
 | --- | --- | --- |
-| `flux` | 当前默认：FLUX 图生图/文生图，适合创作和重绘 | 可能改变文字 |
+| `flux` | FLUX 文生图/图生图；图生图会按 `flux_refine_strength` 低强度参考原图重绘 | 可能改变文字 |
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
 | `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖目标尺寸，再缩放到 4K，不进 FLUX | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
 
-严格要求“字体、文字 100% 不变”时，优先 `pixel`；但 `pixel` 只是保真放大和锐化，不会凭空生成新纹理，低分辨率原图放到 4K 仍可能显得模糊。安装并配置 Real-ESRGAN 权重后可试 `realesrgan`，它才是 AI 超分细节增强，且不会进入 FLUX 重绘；只有 `realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
+如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`flux` 和 `realesrgan_flux` 都会进入扩散模型，没有像素级一致性保证。
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
 
@@ -393,6 +393,21 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 | 老照片、证件比例 | `aspect_ratio=4:3`、`resolution=4k` | `4096x3072` |
 
 注意：`enhance_mode=flux` 是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；`enhance_mode=pixel` 保真但不会生成真实高清细节；如果想兼顾清晰度和保真，请配置 Real-ESRGAN 后使用 `enhance_mode=realesrgan`。
+
+如果希望通过 FLUX 直接参考原图重绘成 4K，可以使用：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
+  -F "prompt=Make this image cleaner and sharper in 4K, preserve the original composition, identity and text as much as possible" ^
+  -F "image=@input.png" ^
+  -F "aspect_ratio=16:9" ^
+  -F "resolution=4k" ^
+  -F "enhance_mode=flux" ^
+  -F "flux_refine_strength=0.08" ^
+  -F "seed=0"
+```
+
+`flux_refine_strength` 越低越接近原图，越高越清晰但越容易改内容。建议从 `0.05`–`0.12` 试起；如果文字变化明显，降低到 `0.03`–`0.06`。
 
 ## 响应格式
 

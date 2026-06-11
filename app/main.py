@@ -418,7 +418,7 @@ async def _run_image_request(
         height=generation_height,
         num_inference_steps=payload.num_inference_steps or app_settings.num_inference_steps,
         seed=payload.seed,
-        strength=payload.flux_refine_strength or app_settings.flux_refine_strength if enhance_mode == "realesrgan_flux" else None,
+        strength=(payload.flux_refine_strength or app_settings.flux_refine_strength) if reference_image is not None else None,
     )
     if image.size != (output_width, output_height):
         image = image.resize((output_width, output_height))
