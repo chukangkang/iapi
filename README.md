@@ -104,7 +104,9 @@ PIXEL_SHARPEN_RADIUS=1.4
 PIXEL_SHARPEN_PERCENT=140
 PIXEL_SHARPEN_THRESHOLD=3
 REALESRGAN_MODEL_PATH=
+REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
 REALESRGAN_MAX_PASSES=2
+REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_TILE=512
 ```
 
@@ -120,6 +122,21 @@ REALESRGAN_TILE=512
 严格要求“字体、文字 100% 不变”时，优先 `pixel`；但 `pixel` 只是保真放大和锐化，不会凭空生成新纹理，低分辨率原图放到 4K 仍可能显得模糊。安装并配置 Real-ESRGAN 权重后可试 `realesrgan`，它才是 AI 超分细节增强，且不会进入 FLUX 重绘；只有 `realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
+
+当前 `realesrgan` Python 推理包需要 `.pth` 权重，不能直接加载 Hugging Face/Qualcomm 目录里的 `model.safetensors`。推荐下载最新版通用小模型 `realesr-general-x4v3.pth`，文字/视频高清场景先用它；`realesr-general-wdn-x4v3.pth` 是强降噪搭配权重，可选下载到同一目录。
+
+服务器示例：
+
+```env
+REALESRGAN_MODEL_PATH=/root/xinglin-data/chat/weights
+REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
+REALESRGAN_DENOISE_STRENGTH=0.35
+```
+
+下载地址：
+
+- `realesr-general-x4v3.pth`：通用推荐模型。
+- `realesr-general-wdn-x4v3.pth`：可选强降噪权重；和普通版放同一目录时，服务会按 `REALESRGAN_DENOISE_STRENGTH` 混合。文字保真建议 `0.2`–`0.5`，不要太高，避免笔画被抹平。
 
 ## 阿里云 OSS 输出
 

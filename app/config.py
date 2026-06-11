@@ -32,8 +32,9 @@ class Settings(BaseSettings):
     pixel_sharpen_percent: int = Field(default=140, ge=0)
     pixel_sharpen_threshold: int = Field(default=3, ge=0)
     realesrgan_model_path: str = ""
-    realesrgan_model_name: str = "RealESRGAN_x4plus"
+    realesrgan_model_name: str = "realesr-general-x4v3.pth"
     realesrgan_max_passes: int = Field(default=2, ge=1, le=4)
+    realesrgan_denoise_strength: float = Field(default=0.35, ge=0.0, le=1.0)
     realesrgan_tile: int = Field(default=512, ge=0)
     realesrgan_tile_pad: int = Field(default=10, ge=0)
     realesrgan_pre_pad: int = Field(default=0, ge=0)

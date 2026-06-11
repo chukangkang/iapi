@@ -384,6 +384,7 @@ async def _run_image_request(
         metadata["pixel_sharpen_percent"] = app_settings.pixel_sharpen_percent
     if enhance_mode in {"realesrgan", "realesrgan_flux"}:
         metadata["realesrgan_max_passes"] = app_settings.realesrgan_max_passes
+        metadata["realesrgan_denoise_strength"] = app_settings.realesrgan_denoise_strength
 
     if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
