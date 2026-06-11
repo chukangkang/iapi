@@ -53,10 +53,13 @@ class ImageUpscaleService:
         from basicsr.archs.rrdbnet_arch import RRDBNet
 
         upsampler = self._get_upsampler(RealESRGANer, RRDBNet, model_path)
-        scale = max(width / image.width, height / image.height)
-        outscale = max(1.0, min(4.0, scale))
-        output, _ = upsampler.enhance(np.array(image), outscale=outscale)
-        return Image.fromarray(output).resize((width, height), Image.Resampling.LANCZOS)
+        upscaled = image
+        for _ in range(self.settings.realesrgan_max_passes):
+            output, _ = upsampler.enhance(np.array(upscaled), outscale=4)
+            upscaled = Image.fromarray(output).convert("RGB")
+            if upscaled.width >= width and upscaled.height >= height:
+                break
+        return upscaled.resize((width, height), Image.Resampling.LANCZOS)
 
     def _get_upsampler(self, realesrganer, rrdbnet, model_path: str):
         if self._upsampler is not None:

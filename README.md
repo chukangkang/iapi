@@ -104,6 +104,7 @@ PIXEL_SHARPEN_RADIUS=1.4
 PIXEL_SHARPEN_PERCENT=140
 PIXEL_SHARPEN_THRESHOLD=3
 REALESRGAN_MODEL_PATH=
+REALESRGAN_MAX_PASSES=2
 REALESRGAN_TILE=512
 ```
 
@@ -113,10 +114,12 @@ REALESRGAN_TILE=512
 | --- | --- | --- |
 | `flux` | 当前默认：FLUX 图生图/文生图，适合创作和重绘 | 可能改变文字 |
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
-| `realesrgan` | 用 Real-ESRGAN 超分，失败前需安装依赖并配置权重路径 | 高 |
+| `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖目标尺寸，再缩放到 4K，不进 FLUX | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
 
-严格要求“字体、文字 100% 不变”时，优先 `pixel`；但 `pixel` 只是保真放大和锐化，不会凭空生成新纹理，低分辨率原图放到 4K 仍可能显得模糊。安装并配置 Real-ESRGAN 权重后可试 `realesrgan`，它才是 AI 超分细节增强。`realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
+严格要求“字体、文字 100% 不变”时，优先 `pixel`；但 `pixel` 只是保真放大和锐化，不会凭空生成新纹理，低分辨率原图放到 4K 仍可能显得模糊。安装并配置 Real-ESRGAN 权重后可试 `realesrgan`，它才是 AI 超分细节增强，且不会进入 FLUX 重绘；只有 `realesrgan_flux` 会再次进入 FLUX，虽然默认强度很低，但扩散模型没有像素级一致性保证。
+
+`REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
 
 ## 阿里云 OSS 输出
 
