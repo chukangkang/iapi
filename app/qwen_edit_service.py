@@ -119,7 +119,7 @@ class QwenImageEditService:
             if self.settings.qwen_edit_quantization == "8bit":
                 return pipeline_quantization_config(
                     quant_backend="bitsandbytes_8bit",
-                    quant_kwargs={"load_in_8bit": True},
+                    quant_kwargs={"load_in_8bit": True, "llm_int8_enable_fp32_cpu_offload": True},
                 )
             return pipeline_quantization_config(
                 quant_backend="bitsandbytes_4bit",
