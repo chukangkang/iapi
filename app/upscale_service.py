@@ -1,5 +1,7 @@
 import asyncio
 import inspect
+import sys
+import types
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -48,6 +50,8 @@ class ImageUpscaleService:
         model_path = self._resolve_realesrgan_model_path()
         if model_path is None:
             return None
+
+        _patch_torchvision_functional_tensor()
 
         import numpy as np
         from realesrgan import RealESRGANer
@@ -125,9 +129,30 @@ class ImageUpscaleService:
 
 @lru_cache
 def realesrgan_available() -> bool:
+    return realesrgan_import_error() is None
+
+
+@lru_cache
+def realesrgan_import_error() -> Optional[str]:
     try:
+        _patch_torchvision_functional_tensor()
         import basicsr  # noqa: F401
         import realesrgan  # noqa: F401
     except Exception:
-        return False
-    return True
+        import traceback
+
+        return traceback.format_exc(limit=5)
+    return None
+
+
+def _patch_torchvision_functional_tensor() -> None:
+    if "torchvision.transforms.functional_tensor" in sys.modules:
+        return
+    try:
+        from torchvision.transforms.functional import rgb_to_grayscale
+    except Exception:
+        return
+
+    module = types.ModuleType("torchvision.transforms.functional_tensor")
+    module.rgb_to_grayscale = rgb_to_grayscale
+    sys.modules["torchvision.transforms.functional_tensor"] = module

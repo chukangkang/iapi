@@ -16,7 +16,7 @@ from app.flux_service import FluxImageService
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
-from app.upscale_service import ImageUpscaleService, realesrgan_available
+from app.upscale_service import ImageUpscaleService, realesrgan_available, realesrgan_import_error
 
 
 SIZE_PRESETS = {
@@ -451,7 +451,7 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
     if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not realesrgan_available():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Real-ESRGAN dependencies are not installed. Install realesrgan and basicsr, or use enhance_mode=pixel.",
+            detail=f"Real-ESRGAN dependencies cannot be imported. Install/fix realesrgan and basicsr, or use enhance_mode=pixel. Import error: {realesrgan_import_error()}",
         )
     if payload.enhance_mode in {"realesrgan", "realesrgan_flux"} and not app_settings.realesrgan_model_path.strip():
         raise HTTPException(
