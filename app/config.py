@@ -1,7 +1,7 @@
 from functools import lru_cache
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -59,7 +59,15 @@ class Settings(BaseSettings):
     realesrgan_pre_pad: int = Field(default=0, ge=0)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
+    task_db_backend: Literal["sqlite", "mysql"] = "sqlite"
     task_db_path: Path = Path("data/image_tasks.sqlite3")
+    mysql_host: str = "127.0.0.1"
+    mysql_port: int = Field(default=3306, ge=1, le=65535)
+    mysql_user: str = "root"
+    mysql_password: str = ""
+    mysql_database: str = "iapi"
+    mysql_charset: str = "utf8mb4"
+    mysql_connect_timeout: int = Field(default=10, ge=1)
     task_public_base_url: str = ""
     output_dir: Path = Path("outputs")
     public_base_url: str = ""
@@ -97,6 +105,11 @@ class Settings(BaseSettings):
     @property
     def normalized_task_public_base_url(self) -> str:
         return self.task_public_base_url.rstrip("/")
+
+    @computed_field
+    @property
+    def mysql_password_or_none(self) -> Optional[str]:
+        return self.mysql_password or None
 
 
 @lru_cache

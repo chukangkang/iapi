@@ -250,13 +250,22 @@ ALIYUN_REGION_ID=cn-hangzhou
 ```env
 IMAGE_WORKER_COUNT=1
 IMAGE_QUEUE_MAXSIZE=100
+TASK_DB_BACKEND=sqlite
 TASK_DB_PATH=data/image_tasks.sqlite3
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=iapi
+MYSQL_CHARSET=utf8mb4
+MYSQL_CONNECT_TIMEOUT=10
 TASK_PUBLIC_BASE_URL=
 ```
 
 - 单张 4090 建议保持 `IMAGE_WORKER_COUNT=1`，避免并发推理导致 OOM。
 - 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
-- 任务元数据会保存到 `TASK_DB_PATH` 指定的 SQLite 文件中，服务重启后仍可查询已保存的任务状态和已完成结果。
+- `TASK_DB_BACKEND=sqlite` 时，任务元数据会保存到 `TASK_DB_PATH` 指定的 SQLite 文件中；`TASK_DB_BACKEND=mysql` 时，会使用 `MYSQL_*` 配置连接 MySQL，并自动创建 `image_tasks` 表。
+- 使用 MySQL 前需先创建数据库，例如 `MYSQL_DATABASE=iapi` 对应的库；服务只负责创建任务表，不会自动创建数据库。
 - 当前待执行队列仍在内存中，服务重启时 `queued` / `running` 任务不会自动续跑；如需生产级可靠队列，可接 Redis/RQ/Celery。
 - `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `GET /v1/images/tasks/{task_id}`。
 
