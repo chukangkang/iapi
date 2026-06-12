@@ -2,6 +2,8 @@ import asyncio
 import inspect
 import sys
 import types
+import contextlib
+import io
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -69,7 +71,8 @@ class ImageUpscaleService:
         upsampler = self._get_upsampler(RealESRGANer, RRDBNet, SRVGGNetCompact, model_path)
         upscaled = image
         for _ in range(self.settings.realesrgan_max_passes):
-            output, _ = upsampler.enhance(np.array(upscaled), outscale=4)
+            with contextlib.redirect_stdout(io.StringIO()):
+                output, _ = upsampler.enhance(np.array(upscaled), outscale=4)
             upscaled = Image.fromarray(output).convert("RGB")
             if upscaled.width >= width and upscaled.height >= height:
                 break

@@ -401,9 +401,10 @@ async def _run_image_request(
         generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
         qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
-        qwen_prompt = app_settings.qwen_unblur_upscale_trigger_prompt if is_unblur_upscale else payload.prompt
+        qwen_prompt = _qwen_unblur_upscale_prompt(payload.prompt, app_settings) if is_unblur_upscale else payload.prompt
         metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
         metadata["qwen_edit_strength"] = qwen_strength
+        metadata["qwen_edit_prompt"] = qwen_prompt
         metadata["qwen_edit_width"] = generation_width
         metadata["qwen_edit_height"] = generation_height
         if is_unblur_upscale:
@@ -579,6 +580,16 @@ def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Setting
 
 def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
     return payload.upscale_fit_mode or app_settings.upscale_fit_mode
+
+
+def _qwen_unblur_upscale_prompt(prompt: Optional[str], app_settings: Settings) -> str:
+    trigger_prompt = app_settings.qwen_unblur_upscale_trigger_prompt.strip()
+    user_prompt = (prompt or "").strip()
+    if not user_prompt:
+        return trigger_prompt
+    if trigger_prompt and trigger_prompt.lower() not in user_prompt.lower():
+        return f"{trigger_prompt}, {user_prompt}"
+    return user_prompt
 
 
 def _apply_prompt_params(payload: ImageGenerationRequest) -> None:

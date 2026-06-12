@@ -149,7 +149,7 @@ REALESRGAN_TILE=512
 
 `QWEN_EDIT_TRUE_CFG_SCALE=4.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，更贴近 Qwen Image Edit 2511 / Plus pipeline 的推荐调用方式；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS` 建议从 `10` 起步，画质通常比 `4` 步稳定。
 
-`qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`，触发词固定为 `unblur and upscale`。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
+`qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`。`QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT` 会自动拼到用户请求的 `prompt` 前面以触发 LoRA，不会覆盖用户提示词；如果请求提示词里已经包含触发词，则不会重复拼接。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
 
 截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH=2048`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。服务会先把参考图按最长边缩放到 2048，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到请求的 4K 尺寸。
 
