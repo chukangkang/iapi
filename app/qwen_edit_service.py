@@ -13,6 +13,7 @@ class QwenImageEditService:
         self._pipe = None
         self._device = None
         self._dtype = None
+        self._active_adapter = None
 
     async def edit(
         self,
@@ -89,7 +90,7 @@ class QwenImageEditService:
         if adapter_name and "cross_attention_kwargs" in signature:
             kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
 
-        with torch.inference_mode():
+        with torch.no_grad():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
 
@@ -97,6 +98,7 @@ class QwenImageEditService:
         if not lora_path:
             if hasattr(pipe, "disable_lora"):
                 pipe.disable_lora()
+            self._active_adapter = None
             return None
         adapter_name = "qwen_unblur_upscale"
         loaded_adapters = getattr(pipe, "get_list_adapters", lambda: {})()
@@ -106,10 +108,13 @@ class QwenImageEditService:
             if lora_weight_name:
                 kwargs["weight_name"] = lora_weight_name
             pipe.load_lora_weights(lora_path, **kwargs)
+        if self._active_adapter == adapter_name:
+            return adapter_name
         if hasattr(pipe, "set_adapters"):
             pipe.set_adapters([adapter_name])
         elif hasattr(pipe, "enable_lora"):
             pipe.enable_lora()
+        self._active_adapter = adapter_name
         return adapter_name
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
