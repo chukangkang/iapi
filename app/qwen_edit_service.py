@@ -26,6 +26,9 @@ class QwenImageEditService:
         seed: Optional[int],
         guidance_scale: float,
         strength: Optional[float],
+        lora_path: Optional[str] = None,
+        lora_weight_name: Optional[str] = None,
+        lora_scale: float = 1.0,
     ) -> Image.Image:
         return await asyncio.to_thread(
             self._edit_sync,
@@ -38,6 +41,9 @@ class QwenImageEditService:
             seed=seed,
             guidance_scale=guidance_scale,
             strength=strength,
+            lora_path=lora_path,
+            lora_weight_name=lora_weight_name,
+            lora_scale=lora_scale,
         )
 
     def _edit_sync(
@@ -52,10 +58,14 @@ class QwenImageEditService:
         seed: Optional[int],
         guidance_scale: float,
         strength: Optional[float],
+        lora_path: Optional[str],
+        lora_weight_name: Optional[str],
+        lora_scale: float,
     ) -> Image.Image:
         import torch
 
         pipe = self._get_pipeline()
+        adapter_name = self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name)
         signature = inspect.signature(pipe.__call__).parameters
         kwargs = {
             "prompt": prompt,
@@ -76,10 +86,31 @@ class QwenImageEditService:
             kwargs["strength"] = strength
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
+        if adapter_name and "cross_attention_kwargs" in signature:
+            kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
 
         with torch.inference_mode():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
+
+    def _ensure_lora(self, pipe, *, lora_path: Optional[str], lora_weight_name: Optional[str]) -> Optional[str]:
+        if not lora_path:
+            if hasattr(pipe, "disable_lora"):
+                pipe.disable_lora()
+            return None
+        adapter_name = "qwen_unblur_upscale"
+        loaded_adapters = getattr(pipe, "get_list_adapters", lambda: {})()
+        adapter_loaded = adapter_name in loaded_adapters or any(adapter_name in names for names in loaded_adapters.values()) if isinstance(loaded_adapters, dict) else False
+        if not adapter_loaded:
+            kwargs = {"adapter_name": adapter_name}
+            if lora_weight_name:
+                kwargs["weight_name"] = lora_weight_name
+            pipe.load_lora_weights(lora_path, **kwargs)
+        if hasattr(pipe, "set_adapters"):
+            pipe.set_adapters([adapter_name])
+        elif hasattr(pipe, "enable_lora"):
+            pipe.enable_lora()
+        return adapter_name
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
         color = self.settings.qwen_edit_background_color

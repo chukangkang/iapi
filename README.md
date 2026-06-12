@@ -33,7 +33,7 @@
 | `num_inference_steps` | 推理步数 | `4` |
 | `seed` | 随机种子 | `null` |
 | `response_format` | `url` 或 `b64_json` | `url` |
-| `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan` | `.env` 默认值 |
+| `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
 | `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
 | `n` | 当前仅支持 `1` | `1` |
 
@@ -100,8 +100,8 @@ TOKENIZERS_PARALLELISM=false
 ```env
 DEFAULT_ENHANCE_MODE=flux
 FLUX_REFINE_STRENGTH=0.08
-QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit
-QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPipeline
+QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit-2511
+QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline
 QWEN_EDIT_STEPS=10
 QWEN_EDIT_GUIDANCE_SCALE=1.0
 QWEN_EDIT_TRUE_CFG_SCALE=4.0
@@ -113,6 +113,10 @@ QWEN_EDIT_ROUND_TO_MULTIPLE=16
 QWEN_EDIT_BACKGROUND_COLOR=#000000
 QWEN_EDIT_QUANTIZATION=none
 QWEN_EDIT_DEVICE_MAP=balanced
+QWEN_UNBLUR_UPSCALE_LORA_PATH=prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale
+QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME=Qwen-Image-Edit-Unblur-Upscale_20.safetensors
+QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT=unblur and upscale
+QWEN_UNBLUR_UPSCALE_LORA_SCALE=1.0
 PIXEL_SHARPEN_ENABLED=true
 PIXEL_SHARPEN_RADIUS=1.4
 PIXEL_SHARPEN_PERCENT=140
@@ -124,20 +128,6 @@ REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
 REALESRGAN_MAX_PASSES=2
 REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_TILE=512
-SEEDVR2_REPO_PATH=
-SEEDVR2_PYTHON=
-SEEDVR2_MODEL_PATH=
-SEEDVR2_VAE_PATH=
-SEEDVR2_DEVICE=cuda:0
-SEEDVR2_OFFLOAD_DEVICE=cpu
-SEEDVR2_BLOCKS_TO_SWAP=36
-SEEDVR2_ATTENTION_MODE=sdpa
-SEEDVR2_RESOLUTION=1024
-SEEDVR2_MAX_RESOLUTION=0
-SEEDVR2_BATCH_SIZE=1
-SEEDVR2_COLOR_CORRECTION=wavelet
-SEEDVR2_INPUT_NOISE_SCALE=0.0
-SEEDVR2_LATENT_NOISE_SCALE=0.0
 ```
 
 模式说明：
@@ -150,82 +140,22 @@ SEEDVR2_LATENT_NOISE_SCALE=0.0
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
 | `qwen_edit` | Python 直接加载 Qwen Image Edit 做高清编辑，再像素放大到目标尺寸 | 中 |
 | `qwen_edit_realesrgan` | Qwen Image Edit 高清编辑后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
-| `seedvr2` | 使用独立 SeedVR2 repo 做扩散式高清修复/放大 | 中 |
-| `qwen_edit_seedvr2` | Qwen Image Edit 修复后，再交给 SeedVR2 高清修复 | 中 |
+| `qwen_unblur_upscale` | 加载 `Qwen-Image-Edit-2511-Unblur-Upscale` LoRA 做去模糊/高清增强，再像素放大到目标尺寸 | 中高 |
+| `qwen_unblur_upscale_realesrgan` | Qwen Unblur/Upscale LoRA 修复后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
 
-如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`seedvr2`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
+如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
 
-如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit` 或 `enhance_mode=qwen_edit_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
+如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
 
 `QWEN_EDIT_TRUE_CFG_SCALE=4.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，更贴近 Qwen Image Edit 2511 / Plus pipeline 的推荐调用方式；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS` 建议从 `10` 起步，画质通常比 `4` 步稳定。
+
+`qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`，触发词固定为 `unblur and upscale`。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
 
 截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH=2048`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。服务会先把参考图按最长边缩放到 2048，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到请求的 4K 尺寸。
 
 4090 24G 显存紧张时可开启 Qwen Edit 量化：`QWEN_EDIT_QUANTIZATION=8bit`。更省显存可试 `4bit`，但速度和画质可能波动；量化依赖 Linux 下的 `bitsandbytes` 和支持 `PipelineQuantizationConfig` 的新版 Diffusers，默认 `none` 不启用。量化加载时 `QWEN_EDIT_DEVICE_MAP` 可选 `balanced`、`cuda`、`cpu`，默认 `balanced`；`8bit + balanced` 会启用 CPU fp32 offload，牺牲速度换稳定加载。若使用已经量化好的 Diffusers 仓库，例如 `ovedrive/Qwen-Image-Edit-2511-4bit`，请保持 `QWEN_EDIT_QUANTIZATION=none`，并设置 `QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline`。
 
 `REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
-
-如果 Real-ESRGAN 效果不够自然，可以改用 `enhance_mode=seedvr2` 或 `enhance_mode=qwen_edit_seedvr2`。SeedVR2 不是普通超分权重加载器，需要同时准备 **GitHub 代码仓库** 和 **Hugging Face 权重仓库**：
-
-- `SEEDVR2_REPO_PATH`：指向 `https://github.com/ByteDance-Seed/SeedVR` 克隆后的代码目录，里面应有 `projects/inference_seedvr2_3b.py`。
-- `SEEDVR2_PYTHON`：可选，指向已经安装好 SeedVR / Apex 依赖的 `seedvr` 虚拟环境 Python；为空时使用当前 FastAPI 进程的 Python。
-- `SEEDVR2_MODEL_PATH` / `SEEDVR2_VAE_PATH`：指向从 `ByteDance-Seed/SeedVR2-3B` 下载的官方 `.pth` 权重文件，例如 `seedvr2_ema_3b.pth` 和 `ema_vae.pth`。
-- Hugging Face 的 `ByteDance-Seed/SeedVR2-3B` 是权重仓库，不是推理代码仓库，所以它里面没有 `projects/inference_seedvr2_3b.py` 是正常的。
-
-当前后端已内置 SeedVR2 桥接逻辑：请求进入 `enhance_mode=seedvr2` 或 `enhance_mode=qwen_edit_seedvr2` 后，会把输入图保存到临时目录，在本地 `SeedVR` 代码仓库里执行官方 `projects/inference_seedvr2_3b.py`，再读取输出图片返回。运行过程不访问外链，但首次执行会加载完整 SeedVR2 模型，耗时和显存占用都比较高。
-
-如果服务端没有 `SeedVR/` 文件夹，需要先在服务端项目根目录下载完整官方代码仓库：
-
-Linux：
-
-```bash
-bash scripts/download_seedvr.sh
-```
-
-Windows：
-
-```powershell
-.\scripts\download_seedvr.ps1
-```
-
-下载完成后，`SEEDVR2_REPO_PATH` 必须填写服务端机器上的真实路径。例如本地 Windows 可以是 `e:\sd\iapi\SeedVR`，Linux 服务器通常应改成 `/root/xinglin-data/chat/iapi/SeedVR` 或你的实际部署目录。不要把本机 Windows 路径直接用于 Linux 服务端。
-
-SeedVR2 官方脚本还有一组额外 Python 依赖。推荐使用独立的 `seedvr` conda/venv 环境安装官方依赖和 Apex，然后让 `SEEDVR2_PYTHON` 指向该环境的 Python；这样 FastAPI 可以继续运行在自己的服务环境里，SeedVR 子进程使用完整 SeedVR 环境。
-
-```bash
-conda activate seedvr
-python -m pip install -r requirements-seedvr.txt
-```
-
-SeedVR 官方推荐 Python 3.9/3.10；如果你的 `seedvr` 环境已经完整安装 `flash-attn` / `apex`，请优先配置 `SEEDVR2_PYTHON`，不要让 FastAPI 的 Python 3.12 环境直接跑官方脚本。
-
-如果已经进入采样但报 `CUDA error: no kernel image is available for execution on the device`，通常是 `flash-attn` 或其它 CUDA 扩展的 wheel 与当前 GPU 架构不匹配。优先方案是在 `SEEDVR2_PYTHON` 对应环境里重装匹配显卡/CUDA/PyTorch 的 `flash-attn`。临时绕过可设置 `SEEDVR2_PATCH_FLASH_ATTN=true`，后端会把 SeedVR 的 varlen flash attention 替换成 PyTorch SDPA fallback；这个模式更慢、更吃显存，只建议用于验证链路。
-
-可用下面的命令检查 `flash-attn` / `apex` 是否真的能在当前 GPU 上执行，而不仅仅是 `pip list` 中存在：
-
-```bash
-/root/miniconda3/envs/seedvr/bin/python scripts/check_seedvr_cuda.py
-```
-
-如果看到 `ModuleNotFoundError: No module named 'data.image'`，这不是 pip 包缺失，而是 `SEEDVR2_REPO_PATH` 指向的 SeedVR 代码目录不完整、路径不对，或环境里已有其它名为 `data` 的包抢占了导入。请确认服务端存在 `SEEDVR2_REPO_PATH/data/image/transforms/divisible_crop.py`，必要时在服务端项目根目录重新执行 `bash scripts/download_seedvr.sh`。下载脚本会自动给 SeedVR 源码目录补空的 `__init__.py`，避免命名空间包冲突。
-
-SeedVR2 服务器示例：
-
-```env
-SEEDVR2_REPO_PATH=/root/xinglin-data/chat/SeedVR
-SEEDVR2_PYTHON=/root/miniconda3/envs/seedvr/bin/python
-SEEDVR2_MODEL_PATH=/root/xinglin-data/chat/weights/seedvr2_ema_3b.pth
-SEEDVR2_VAE_PATH=/root/xinglin-data/chat/weights/ema_vae.pth
-SEEDVR2_DEVICE=cuda:0
-SEEDVR2_OFFLOAD_DEVICE=cpu
-SEEDVR2_BLOCKS_TO_SWAP=36
-SEEDVR2_ATTENTION_MODE=sdpa
-SEEDVR2_PATCH_FLASH_ATTN=false
-SEEDVR2_RESOLUTION=1024
-SEEDVR2_COLOR_CORRECTION=wavelet
-```
-
-注意：官方 `projects/inference_seedvr2_3b.py` 默认从 `./ckpts/seedvr2_ema_3b.pth` 和 `./ckpts/ema_vae.pth` 加载权重。后端会自动在 `SEEDVR2_REPO_PATH/ckpts` 下创建软链接；如果系统不允许软链接，则复制权重文件。请预留足够磁盘空间。ComfyUI 社区转换的 `.safetensors` / fp8 权重不能直接给官方脚本使用。
 
 `UPSCALE_FIT_MODE=cover` 会保持原图比例并居中裁剪到目标 4K，避免黑边，也避免强行拉伸导致字体变形。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。高清输出推荐保持 `cover`。
 

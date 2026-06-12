@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     default_width: int = Field(default=768, ge=64)
     default_height: int = Field(default=768, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
-    default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "seedvr2", "qwen_edit_seedvr2"] = "flux"
+    default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
-    qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit"
-    qwen_edit_pipeline_class: str = "QwenImageEditPipeline"
+    qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
+    qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
     qwen_edit_steps: int = Field(default=10, ge=1)
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
     qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     qwen_edit_background_color: str = "#000000"
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"
     qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "balanced"
+    qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
+    qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
+    qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
+    qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
     pixel_sharpen_enabled: bool = True
     pixel_sharpen_radius: float = Field(default=1.4, ge=0.0)
     pixel_sharpen_percent: int = Field(default=140, ge=0)
@@ -53,21 +57,6 @@ class Settings(BaseSettings):
     realesrgan_tile: int = Field(default=512, ge=0)
     realesrgan_tile_pad: int = Field(default=10, ge=0)
     realesrgan_pre_pad: int = Field(default=0, ge=0)
-    seedvr2_repo_path: str = ""
-    seedvr2_python: str = ""
-    seedvr2_model_path: str = ""
-    seedvr2_vae_path: str = ""
-    seedvr2_device: str = "cuda:0"
-    seedvr2_offload_device: str = "cpu"
-    seedvr2_blocks_to_swap: int = Field(default=36, ge=0)
-    seedvr2_attention_mode: str = "sdpa"
-    seedvr2_resolution: int = Field(default=1024, ge=64)
-    seedvr2_patch_flash_attn: bool = False
-    seedvr2_max_resolution: int = Field(default=0, ge=0)
-    seedvr2_batch_size: int = Field(default=1, ge=1)
-    seedvr2_color_correction: str = "wavelet"
-    seedvr2_input_noise_scale: float = Field(default=0.0, ge=0.0)
-    seedvr2_latent_noise_scale: float = Field(default=0.0, ge=0.0)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
     task_db_path: Path = Path("data/image_tasks.sqlite3")
