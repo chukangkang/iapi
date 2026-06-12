@@ -256,6 +256,12 @@ class SeedVR2Service:
             output_tail = combined_output[-8000:]
             missing_module_match = re.search(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]", combined_output)
             install_hint = ""
+            if "no kernel image is available for execution on the device" in combined_output:
+                install_hint = (
+                    "\nCUDA extension architecture mismatch: the SeedVR Python environment loaded a CUDA kernel "
+                    "that was not compiled for the current GPU. Reinstall flash-attn/apex for this GPU, CUDA, "
+                    "and PyTorch version, or set SEEDVR2_PATCH_FLASH_ATTN=true to use the slower PyTorch SDPA fallback."
+                )
             if missing_module_match:
                 missing_module = missing_module_match.group(1)
                 if missing_module.partition(".")[0] in SEEDVR_SOURCE_MODULE_PREFIXES:
