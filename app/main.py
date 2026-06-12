@@ -382,6 +382,7 @@ async def _run_image_request(
     output_width, output_height = _resolve_dimensions(payload, app_settings)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
+    negative_prompt = _merge_negative_prompt(app_settings.default_negative_prompt, payload.negative_prompt)
     metadata = {
         "enhance_mode": enhance_mode,
         "target_width": output_width,
@@ -391,6 +392,8 @@ async def _run_image_request(
         "upscale_fit_mode": upscale_fit_mode,
         "upscale_fill_color": app_settings.upscale_fill_color,
     }
+    if negative_prompt:
+        metadata["negative_prompt"] = negative_prompt
     if enhance_mode == "pixel":
         metadata["pixel_sharpen_enabled"] = app_settings.pixel_sharpen_enabled
         metadata["pixel_sharpen_percent"] = app_settings.pixel_sharpen_percent
@@ -413,7 +416,7 @@ async def _run_image_request(
             metadata["qwen_unblur_upscale_lora_scale"] = app_settings.qwen_unblur_upscale_lora_scale
         image = await _qwen_edit_service.edit(
             prompt=qwen_prompt,
-            negative_prompt=payload.negative_prompt,
+            negative_prompt=negative_prompt,
             image=reference_image,
             width=generation_width,
             height=generation_height,
@@ -456,7 +459,7 @@ async def _run_image_request(
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     image = await _service.generate(
         prompt=payload.prompt,
-        negative_prompt=payload.negative_prompt,
+        negative_prompt=negative_prompt,
         image=reference_image,
         width=generation_width,
         height=generation_height,
@@ -580,6 +583,25 @@ def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Setting
 
 def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
     return payload.upscale_fit_mode or app_settings.upscale_fit_mode
+
+
+def _merge_negative_prompt(default_negative_prompt: str, request_negative_prompt: Optional[str]) -> Optional[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for prompt in (default_negative_prompt, request_negative_prompt):
+        for term in _split_negative_prompt(prompt):
+            normalized = term.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            terms.append(term)
+    return ", ".join(terms) if terms else None
+
+
+def _split_negative_prompt(prompt: Optional[str]) -> list[str]:
+    if not prompt:
+        return []
+    return [term.strip() for term in re.split(r"[,，;；\n]+", prompt) if term.strip()]
 
 
 def _qwen_unblur_upscale_prompt(prompt: Optional[str], app_settings: Settings) -> str:

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     default_width: int = Field(default=768, ge=64)
     default_height: int = Field(default=768, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
+    default_negative_prompt: str = "extra hands, extra fingers, malformed hands, bad hands, fused fingers, missing fingers, extra arms, deformed limbs, mutated body, bad anatomy, disfigured, distorted face, low quality"
     default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
@@ -33,7 +34,6 @@ class Settings(BaseSettings):
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
     qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
     qwen_edit_strength: float = Field(default=0.7, ge=0.0, le=1.0)
-    qwen_edit_max_pixels: int = Field(default=1048576, ge=65536)
     qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
     qwen_edit_scale_to_length: int = Field(default=2048, ge=64)
     qwen_edit_round_to_multiple: int = Field(default=16, ge=1)

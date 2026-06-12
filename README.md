@@ -24,7 +24,7 @@
 | 字段 | 说明 | 默认值 |
 | --- | --- | --- |
 | `prompt` | 提示词，必填 | - |
-| `negative_prompt` | 反向词；仅在底层 FLUX pipeline 支持时生效 | `null` |
+| `negative_prompt` | 反向词；会与 `.env` 的 `DEFAULT_NEGATIVE_PROMPT` 去重合并，底层 pipeline 支持时生效 | `.env` 默认值 |
 | `image` | 可选参考图；存在时走 i2i/KV cache 流程 | `null` |
 | `size` | OpenAI 风格尺寸，如 `768x768`、`1024x1024` | `768x768` |
 | `aspect_ratio` | 主流比例预设：`16:9`、`4:3`、`1:1`、`9:16` | `null` |
@@ -93,12 +93,28 @@ TOKENIZERS_PARALLELISM=false
 
 `TOKENIZERS_PARALLELISM=false` 用于关闭 Hugging Face `tokenizers` 在多进程/fork 场景下的并行 warning，不影响图片生成结果。
 
+### 模型与下载链接
+
+部署前需要准备的模型/权重如下：
+
+| 用途 | 配置项 | 默认值 / 文件名 | 下载地址 | 是否必需 |
+| --- | --- | --- | --- | --- |
+| FLUX 文生图/图生图基座 | `MODEL_PATH` | `black-forest-labs/FLUX.2-klein-9b-kv` | https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv | 使用 `flux` / 默认生成时必需 |
+| Qwen 图片编辑基座 | `QWEN_EDIT_MODEL_PATH` | `Qwen/Qwen-Image-Edit-2511` | https://huggingface.co/Qwen/Qwen-Image-Edit-2511 | 使用 `qwen_edit*` / `qwen_unblur_upscale*` 时必需 |
+| Qwen 去模糊高清 LoRA | `QWEN_UNBLUR_UPSCALE_LORA_PATH` | `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale | 使用 `qwen_unblur_upscale*` 时必需 |
+| Qwen LoRA 权重文件 | `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` | `Qwen-Image-Edit-Unblur-Upscale_20.safetensors` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale/tree/main | 使用 `qwen_unblur_upscale*` 时必需 |
+| Real-ESRGAN 通用超分 | `REALESRGAN_MODEL_NAME` | `realesr-general-x4v3.pth` | https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth | 使用 `realesrgan*` 时必需 |
+| Real-ESRGAN 可选降噪权重 | 同目录自动识别 | `realesr-general-wdn-x4v3.pth` | https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth | 可选，配合 `REALESRGAN_DENOISE_STRENGTH` 混合 |
+
+Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动下载到本机缓存；如果服务器不能联网，可提前下载到本地目录，并把对应配置项改成本地路径。Real-ESRGAN 当前代码只加载 `.pth` 权重，需手动下载到 `REALESRGAN_MODEL_PATH` 指向的目录，或直接把 `REALESRGAN_MODEL_PATH` 指向具体 `.pth` 文件。
+
 ### 高清保真模式
 
 `.env` 可配置：
 
 ```env
 DEFAULT_ENHANCE_MODE=flux
+DEFAULT_NEGATIVE_PROMPT=extra hands, extra fingers, malformed hands, bad hands, fused fingers, missing fingers, extra arms, deformed limbs, mutated body, bad anatomy, disfigured, distorted face, low quality
 FLUX_REFINE_STRENGTH=0.08
 QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit-2511
 QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline
@@ -106,7 +122,6 @@ QWEN_EDIT_STEPS=10
 QWEN_EDIT_GUIDANCE_SCALE=1.0
 QWEN_EDIT_TRUE_CFG_SCALE=4.0
 QWEN_EDIT_STRENGTH=0.7
-QWEN_EDIT_MAX_PIXELS=1048576
 QWEN_EDIT_SCALE_TO_SIDE=longest
 QWEN_EDIT_SCALE_TO_LENGTH=2048
 QWEN_EDIT_ROUND_TO_MULTIPLE=16
@@ -130,6 +145,8 @@ REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_TILE=512
 ```
 
+`DEFAULT_NEGATIVE_PROMPT` 是全局默认反向词。当前端不传 `negative_prompt` 时会直接使用该配置；当前端传入时，服务会按英文逗号、中文逗号、分号和换行拆分后去重合并，避免重复堆叠相同反向词。
+
 模式说明：
 
 | 模式 | 说明 | 文字一致性 |
@@ -145,7 +162,7 @@ REALESRGAN_TILE=512
 
 如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
 
-如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_MAX_PIXELS` 做安全尺寸编辑，再输出到目标 4K。
+如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到目标 4K。
 
 `QWEN_EDIT_TRUE_CFG_SCALE=4.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，更贴近 Qwen Image Edit 2511 / Plus pipeline 的推荐调用方式；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS` 建议从 `10` 起步，画质通常比 `4` 步稳定。
 
@@ -171,8 +188,8 @@ REALESRGAN_DENOISE_STRENGTH=0.35
 
 下载地址：
 
-- `realesr-general-x4v3.pth`：通用推荐模型。
-- `realesr-general-wdn-x4v3.pth`：可选强降噪权重；和普通版放同一目录时，服务会按 `REALESRGAN_DENOISE_STRENGTH` 混合。文字保真建议 `0.2`–`0.5`，不要太高，避免笔画被抹平。
+- `realesr-general-x4v3.pth`：https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+- `realesr-general-wdn-x4v3.pth`：https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth，可选强降噪权重；和普通版放同一目录时，服务会按 `REALESRGAN_DENOISE_STRENGTH` 混合。文字保真建议 `0.2`–`0.5`，不要太高，避免笔画被抹平。
 
 ## 阿里云 OSS 输出
 
