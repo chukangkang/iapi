@@ -199,6 +199,8 @@ python -m pip install -r requirements-seedvr.txt
 
 SeedVR 官方推荐 Python 3.9/3.10；如果你的 `seedvr` 环境已经完整安装 `flash-attn` / `apex`，请优先配置 `SEEDVR2_PYTHON`，不要让 FastAPI 的 Python 3.12 环境直接跑官方脚本。
 
+如果已经进入采样但报 `CUDA error: no kernel image is available for execution on the device`，通常是 `flash-attn` 或其它 CUDA 扩展的 wheel 与当前 GPU 架构不匹配。优先方案是在 `SEEDVR2_PYTHON` 对应环境里重装匹配显卡/CUDA/PyTorch 的 `flash-attn`。临时绕过可设置 `SEEDVR2_PATCH_FLASH_ATTN=true`，后端会把 SeedVR 的 varlen flash attention 替换成 PyTorch SDPA fallback；这个模式更慢、更吃显存，只建议用于验证链路。
+
 如果看到 `ModuleNotFoundError: No module named 'data.image'`，这不是 pip 包缺失，而是 `SEEDVR2_REPO_PATH` 指向的 SeedVR 代码目录不完整、路径不对，或环境里已有其它名为 `data` 的包抢占了导入。请确认服务端存在 `SEEDVR2_REPO_PATH/data/image/transforms/divisible_crop.py`，必要时在服务端项目根目录重新执行 `bash scripts/download_seedvr.sh`。下载脚本会自动给 SeedVR 源码目录补空的 `__init__.py`，避免命名空间包冲突。
 
 SeedVR2 服务器示例：
@@ -212,6 +214,7 @@ SEEDVR2_DEVICE=cuda:0
 SEEDVR2_OFFLOAD_DEVICE=cpu
 SEEDVR2_BLOCKS_TO_SWAP=36
 SEEDVR2_ATTENTION_MODE=sdpa
+SEEDVR2_PATCH_FLASH_ATTN=false
 SEEDVR2_RESOLUTION=1024
 SEEDVR2_COLOR_CORRECTION=wavelet
 ```

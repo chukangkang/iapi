@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -11,6 +12,8 @@ from typing import Optional
 from PIL import Image
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 SEEDVR_REQUIRED_SOURCE_PATHS = (
     "projects/inference_seedvr2_3b.py",
@@ -54,6 +57,7 @@ class SeedVR2Service:
         return await asyncio.to_thread(self._enhance_sync, image, width=width, height=height, seed=seed)
 
     def _enhance_sync(self, image: Image.Image, *, width: int, height: int, seed: Optional[int]) -> Image.Image:
+        logger.info("SeedVR2 step 1/7: validating paths")
         repo_path, script_path, model_path, vae_path = self._validate_paths()
         with tempfile.TemporaryDirectory(prefix="seedvr2_iapi_") as temp_dir:
             temp_path = Path(temp_dir)
@@ -63,9 +67,14 @@ class SeedVR2Service:
             output_dir.mkdir(parents=True, exist_ok=True)
 
             input_path = input_dir / "input.png"
+            logger.info("SeedVR2 step 2/7: saving input image to %s", input_path)
             image.convert("RGB").save(input_path)
+            logger.info("SeedVR2 step 3/7: preparing SeedVR source package markers")
             self._ensure_package_markers(repo_path)
+            self._patch_flash_attention(repo_path)
+            logger.info("SeedVR2 step 4/7: preparing checkpoint links")
             self._prepare_checkpoints(repo_path, model_path, vae_path)
+            logger.info("SeedVR2 step 5/7: launching official inference script for %sx%s", width, height)
             self._run_official_script(
                 repo_path=repo_path,
                 script_path=script_path,
@@ -75,8 +84,10 @@ class SeedVR2Service:
                 height=height,
                 seed=seed,
             )
+            logger.info("SeedVR2 step 6/7: locating output image in %s", output_dir)
             output_path = self._find_output_image(output_dir, input_path.name)
             with Image.open(output_path) as output_image:
+                logger.info("SeedVR2 step 7/7: loaded output image %s size=%s", output_path, output_image.size)
                 return output_image.convert("RGB").copy()
 
     def _validate_paths(self) -> tuple[Path, Path, Path, Path]:
@@ -130,6 +141,38 @@ class SeedVR2Service:
             if package_dir.exists() and package_dir.is_dir():
                 init_path = package_dir / "__init__.py"
                 init_path.touch(exist_ok=True)
+
+    def _patch_flash_attention(self, repo_path: Path) -> None:
+        if not self.settings.seedvr2_patch_flash_attn:
+            return
+        attention_path = repo_path / "models" / "dit_v2" / "attention.py"
+        if not attention_path.exists():
+            return
+        fallback_marker = "# iapi sdpa fallback for flash attention"
+        content = attention_path.read_text(encoding="utf-8")
+        if fallback_marker in content:
+            return
+        patched_content = content.replace(
+            "from flash_attn import flash_attn_varlen_func",
+            "# from flash_attn import flash_attn_varlen_func\n" + fallback_marker,
+        ).replace(
+            "    def forward(self, *args, **kwargs):\n        kwargs[\"deterministic\"] = torch.are_deterministic_algorithms_enabled()\n        return flash_attn_varlen_func(*args, **kwargs)\n",
+            "    def forward(self, q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, **kwargs):\n"
+            "        outputs = []\n"
+            "        batch_size = cu_seqlens_q.numel() - 1\n"
+            "        for index in range(batch_size):\n"
+            "            q_start, q_end = cu_seqlens_q[index].item(), cu_seqlens_q[index + 1].item()\n"
+            "            k_start, k_end = cu_seqlens_k[index].item(), cu_seqlens_k[index + 1].item()\n"
+            "            q_item = q[q_start:q_end].permute(1, 0, 2).unsqueeze(0)\n"
+            "            k_item = k[k_start:k_end].permute(1, 0, 2).unsqueeze(0)\n"
+            "            v_item = v[k_start:k_end].permute(1, 0, 2).unsqueeze(0)\n"
+            "            output = F.scaled_dot_product_attention(q_item, k_item, v_item)\n"
+            "            outputs.append(output.squeeze(0).permute(1, 0, 2))\n"
+            "        return torch.cat(outputs, dim=0)\n",
+        )
+        if patched_content != content:
+            attention_path.write_text(patched_content, encoding="utf-8")
+            logger.warning("SeedVR2 patched flash attention to PyTorch SDPA fallback: %s", attention_path)
 
     def _prepare_checkpoints(self, repo_path: Path, model_path: Path, vae_path: Path) -> None:
         ckpt_dir = repo_path / "ckpts"
@@ -190,18 +233,28 @@ class SeedVR2Service:
             "--sp_size",
             "1",
         ]
-        completed = subprocess.run(
+        logger.info("SeedVR2 subprocess command: %s", " ".join(command))
+        logger.info("SeedVR2 subprocess python: %s", python_path)
+        logger.info("SeedVR2 subprocess env prefix: %s", env_prefix)
+        process = subprocess.Popen(
             command,
             cwd=repo_path,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            check=False,
         )
-        if completed.returncode != 0:
-            stdout = completed.stdout[-4000:] if completed.stdout else ""
-            stderr = completed.stderr[-4000:] if completed.stderr else ""
-            missing_module_match = re.search(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]", stderr)
+        output_lines: list[str] = []
+        if process.stdout is not None:
+            for line in process.stdout:
+                line = line.rstrip("\n")
+                output_lines.append(line)
+                logger.info("SeedVR2 subprocess: %s", line)
+        returncode = process.wait()
+        combined_output = "\n".join(output_lines)
+        if returncode != 0:
+            output_tail = combined_output[-8000:]
+            missing_module_match = re.search(r"ModuleNotFoundError: No module named ['\"]([^'\"]+)['\"]", combined_output)
             install_hint = ""
             if missing_module_match:
                 missing_module = missing_module_match.group(1)
@@ -213,15 +266,17 @@ class SeedVR2Service:
                         "and ensure data/image/transforms/divisible_crop.py exists under SEEDVR2_REPO_PATH."
                     )
                 else:
+                    extra_hint = " --no-build-isolation" if missing_module == "flash_attn" else ""
                     install_hint = (
                         f"\nMissing Python package: {missing_module}. "
                         "Install SeedVR dependencies in the environment used by SEEDVR2_PYTHON: "
-                        f"{python_path} -m pip install -r requirements-seedvr.txt"
+                        f"{python_path} -m pip install -r requirements-seedvr.txt{extra_hint}"
                     )
             raise RuntimeError(
                 "SeedVR2 official inference failed. "
-                f"Command: {' '.join(command)}\nPython: {python_path}\nEnv prefix: {env_prefix}{install_hint}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+                f"Command: {' '.join(command)}\nPython: {python_path}\nEnv prefix: {env_prefix}{install_hint}\nOUTPUT:\n{output_tail}"
             )
+        logger.info("SeedVR2 subprocess completed successfully")
 
     def _find_output_image(self, output_dir: Path, input_filename: str) -> Path:
         preferred_path = output_dir / input_filename

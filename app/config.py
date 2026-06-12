@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     seedvr2_blocks_to_swap: int = Field(default=36, ge=0)
     seedvr2_attention_mode: str = "sdpa"
     seedvr2_resolution: int = Field(default=1024, ge=64)
+    seedvr2_patch_flash_attn: bool = False
     seedvr2_max_resolution: int = Field(default=0, ge=0)
     seedvr2_batch_size: int = Field(default=1, ge=1)
     seedvr2_color_correction: str = "wavelet"
