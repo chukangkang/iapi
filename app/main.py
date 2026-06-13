@@ -12,12 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
-from app.flux_service import FluxImageService
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
-from app.qwen_edit_service import QwenImageEditService
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
-from app.upscale_service import ImageUpscaleService, realesrgan_available, realesrgan_import_error
 
 
 SIZE_PRESETS = {
@@ -105,27 +102,33 @@ class ChatCompletionRequest(BaseModel):
 settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
-_service: Optional[FluxImageService] = None
-_qwen_edit_service: Optional[QwenImageEditService] = None
-_upscale_service: Optional[ImageUpscaleService] = None
+_service: Optional[Any] = None
+_qwen_edit_service: Optional[Any] = None
+_upscale_service: Optional[Any] = None
 _storage: Optional[ImageStorage] = None
 
 
-def _get_flux_service() -> FluxImageService:
+def _get_flux_service() -> Any:
+    from app.flux_service import FluxImageService
+
     global _service
     if _service is None:
         _service = FluxImageService(settings)
     return _service
 
 
-def _get_qwen_edit_service() -> QwenImageEditService:
+def _get_qwen_edit_service() -> Any:
+    from app.qwen_edit_service import QwenImageEditService
+
     global _qwen_edit_service
     if _qwen_edit_service is None:
         _qwen_edit_service = QwenImageEditService(settings)
     return _qwen_edit_service
 
 
-def _get_upscale_service() -> ImageUpscaleService:
+def _get_upscale_service() -> Any:
+    from app.upscale_service import ImageUpscaleService
+
     global _upscale_service
     if _upscale_service is None:
         _upscale_service = ImageUpscaleService(settings)
@@ -542,11 +545,14 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="image is required for Qwen Edit enhance modes.",
         )
-    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} and not realesrgan_available():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Real-ESRGAN dependencies cannot be imported. Install/fix realesrgan and basicsr, or use enhance_mode=pixel. Import error: {realesrgan_import_error()}",
-        )
+    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}:
+        from app.upscale_service import realesrgan_available, realesrgan_import_error
+
+        if not realesrgan_available():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Real-ESRGAN dependencies cannot be imported. Install/fix realesrgan and basicsr, or use enhance_mode=pixel. Import error: {realesrgan_import_error()}",
+            )
     if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} and not app_settings.realesrgan_model_path.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

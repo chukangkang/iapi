@@ -1,0 +1,12 @@
+-r requirements-api.txt
+torch>=2.6.0
+accelerate>=0.34.0
+transformers>=4.45.0
+bitsandbytes>=0.43.3; platform_system == "Linux"
+basicsr>=1.4.2
+sentencepiece>=0.2.0
+protobuf>=5.27.0
+safetensors>=0.4.4
+opencv-python>=4.10.0
+realesrgan>=0.3.0
+git+https://github.com/huggingface/diffusers.git

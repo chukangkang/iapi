@@ -73,13 +73,33 @@
 
 ## 安装
 
-建议使用 Python 3.11+，并确保 CUDA / PyTorch 环境与显卡匹配。
+建议使用 Python 3.11+。生产拆分部署时，API 节点只需要轻量 Web/数据库依赖；Worker 节点才需要 CUDA / PyTorch / Diffusers 等 GPU 推理依赖。
+
+API 节点安装：
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements-api.txt
+```
+
+Worker 节点安装：
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements-worker.txt
+```
+
+单机开发或 `SERVICE_ROLE=all` 可直接安装全量依赖：
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+`requirements.txt` 保持为全量兼容安装；`requirements-api.txt` 用于 API-only 节点；`requirements-worker.txt` 会包含 API 基础依赖并追加 GPU/模型相关依赖。
 
 如果模型需要 Hugging Face 访问权限，请编辑 `.env`：
 
