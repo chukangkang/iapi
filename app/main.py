@@ -155,6 +155,7 @@ _task_manager = ImageTaskManager(settings, _run_task_payload, ImageGenerationReq
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _validate_runtime_settings(settings)
     await _task_manager.start()
     try:
         yield
@@ -171,6 +172,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/outputs", StaticFiles(directory=str(settings.output_dir)), name="outputs")
+
+
+def _validate_runtime_settings(app_settings: Settings) -> None:
+    if app_settings.service_role == "api" and app_settings.task_queue_backend == "memory":
+        raise RuntimeError("SERVICE_ROLE=api requires TASK_QUEUE_BACKEND=redis; memory queue has no local worker.")
+    if app_settings.service_role == "worker":
+        raise RuntimeError("SERVICE_ROLE=worker should be started with `python -m app.worker`, not uvicorn app.main:app.")
 
 
 @app.get("/health")
@@ -288,10 +296,20 @@ async def _get_image_task_response(task_id: str) -> ImageTaskResultResponse:
 
 async def _submit_image_task(payload: ImageGenerationRequest, reference_image, app_settings: Settings) -> ImageTaskResponse:
     _validate_image_payload(payload, app_settings)
+    if app_settings.service_role == "api" and app_settings.task_queue_backend == "memory":
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="SERVICE_ROLE=api requires TASK_QUEUE_BACKEND=redis; memory queue has no worker in api-only mode.",
+        )
     try:
         task = await _task_manager.submit(payload, reference_image)
-    except Exception as exc:
+    except asyncio.QueueFull as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Image task queue is full") from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit image task: {exc}",
+        ) from exc
     return ImageTaskResponse(
         id=task.id,
         status=task.status,

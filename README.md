@@ -294,8 +294,10 @@ TASK_PUBLIC_BASE_URL=
 - 使用 MySQL 前需先创建数据库，例如 `MYSQL_DATABASE=iapi` 对应的库；服务只负责创建任务表，不会自动创建数据库。
 - `TASK_QUEUE_BACKEND=memory` 保持单进程本地队列；`TASK_QUEUE_BACKEND=redis` 会使用远程 Redis 队列，适合 API/Worker 拆分或多节点部署。
 - `SERVICE_ROLE=api` 只提供 HTTP 接口，不启动本地 worker；`SERVICE_ROLE=worker` 可配合 `python -m app.worker` 只跑 Redis worker；`SERVICE_ROLE=all` 保持 API + worker 同进程。
+- `SERVICE_ROLE=api` 必须搭配 `TASK_QUEUE_BACKEND=redis`，否则 API 只入本地内存队列但没有 worker 消费。
 - 使用本地内存队列时，服务重启后 `queued` / `running` 任务不会自动续跑；使用 Redis 队列时，任务会进入共享队列，适合 API/Worker 拆分部署。
 - `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `GET /v1/images/tasks/{task_id}`。
+- 提交接口返回 `429 Image task queue is full` 表示队列确实达到 `IMAGE_QUEUE_MAXSIZE`；如果是 Redis/MySQL 连接失败或配置错误，会返回 `500 Failed to submit image task: ...` 并带真实错误信息。
 
 生产推荐拆成两个启动角色，并共用同一套代码：
 
@@ -326,6 +328,8 @@ TASK_QUEUE_BACKEND=redis
 ```bash
 python -m app.worker
 ```
+
+Worker 启动后会打印当前 `SERVICE_ROLE`、`TASK_QUEUE_BACKEND`、`TASK_DB_BACKEND`、Redis 队列名等信息；如果 Redis 队列里暂时没有任务，会停留在等待状态，这是正常的。收到任务时会输出 picked/started/completed/failed 日志。
 
 API 节点不会在启动时加载模型；Worker 执行任务时会按需加载模型。多节点生产环境建议同时配置 OSS，避免输入/输出图片依赖某台机器的本地磁盘。
 

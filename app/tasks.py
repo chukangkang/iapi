@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from app.task_store import ImageTaskMetadataStore
 
 
 TaskStatus = str
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +51,7 @@ class ImageTaskManager:
 
     async def start(self) -> None:
         if self.settings.service_role == "api":
+            logger.info("Task workers disabled for SERVICE_ROLE=api")
             return
         if self._workers:
             return
@@ -56,6 +59,11 @@ class ImageTaskManager:
             self.redis = self._redis_from_url()
         for worker_id in range(self.settings.image_worker_count):
             self._workers.append(asyncio.create_task(self._worker_loop(worker_id)))
+        logger.info(
+            "Started %s image worker(s), queue_backend=%s",
+            len(self._workers),
+            self.settings.task_queue_backend,
+        )
 
     async def stop(self) -> None:
         for worker in self._workers:
@@ -108,10 +116,13 @@ class ImageTaskManager:
             return None
 
     async def _worker_loop(self, worker_id: int) -> None:
+        logger.info("Worker %s is waiting for image tasks", worker_id)
         while True:
             task_id = await self._next_task_id()
             if task_id is None:
+                logger.debug("Worker %s is still waiting for tasks", worker_id)
                 continue
+            logger.info("Worker %s picked task %s", worker_id, task_id)
             try:
                 await self._run_task(worker_id, task_id)
             finally:
@@ -127,16 +138,19 @@ class ImageTaskManager:
         task.started = int(time.time())
         task.updated = task.started
         self.store.save(task)
+        logger.info("Worker %s started task %s", worker_id, task_id)
         try:
             task.result = await self.runner(task.payload, task.reference_image)
             task.status = "succeeded"
             task.completed = int(time.time())
             task.reference_image = None
+            logger.info("Worker %s completed task %s", worker_id, task_id)
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)
             task.completed = int(time.time())
             task.reference_image = None
+            logger.exception("Worker %s failed task %s", worker_id, task_id)
         finally:
             task.updated = int(time.time())
             self.store.save(task)
