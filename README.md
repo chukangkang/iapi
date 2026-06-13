@@ -297,6 +297,7 @@ TASK_PUBLIC_BASE_URL=
 - `SERVICE_ROLE=api` 必须搭配 `TASK_QUEUE_BACKEND=redis`，否则 API 只入本地内存队列但没有 worker 消费。
 - 使用本地内存队列时，服务重启后 `queued` / `running` 任务不会自动续跑；使用 Redis 队列时，任务会进入共享队列，适合 API/Worker 拆分部署。
 - `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `GET /v1/images/tasks/{task_id}`。
+- `queue_position` 会返回任务在待处理队列中的当前位置；任务已被 Worker 取走进入运行/处理中后会返回 `null`。
 - 提交接口返回 `429 Image task queue is full` 表示队列确实达到 `IMAGE_QUEUE_MAXSIZE`；如果是 Redis/MySQL 连接失败或配置错误，会返回 `500 Failed to submit image task: ...` 并带真实错误信息。
 
 生产推荐拆成两个启动角色，并共用同一套代码：

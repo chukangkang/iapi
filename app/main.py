@@ -287,12 +287,12 @@ async def get_image_task(task_id: str) -> ImageTaskResultResponse:
 async def _get_image_task_response(task_id: str) -> ImageTaskResultResponse:
     task = await _task_manager.get(task_id)
     if task is not None:
-        return _task_to_result_response(task)
+        return await _task_to_result_response(task)
 
     task_metadata = _task_manager.store.get(task_id)
     if task_metadata is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return _task_metadata_to_result_response(task_metadata)
+    return await _task_metadata_to_result_response(task_metadata)
 
 
 async def _submit_image_task(payload: ImageGenerationRequest, reference_image, app_settings: Settings) -> ImageTaskResponse:
@@ -337,11 +337,11 @@ def _task_id_from_prompt(prompt: Optional[str]) -> Optional[str]:
     return None
 
 
-def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
+async def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
     return ImageTaskResultResponse(
         id=task.id,
         status=task.status,
-        queue_position=_task_manager.queue_position(task.id),
+        queue_position=await _task_manager.queue_position(task.id),
         created=_format_time(task.created),
         updated=_format_time(task.updated),
         started=_format_time(task.started),
@@ -352,11 +352,12 @@ def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
     )
 
 
-def _task_metadata_to_result_response(task: dict[str, Any]) -> ImageTaskResultResponse:
+async def _task_metadata_to_result_response(task: dict[str, Any]) -> ImageTaskResultResponse:
     result = ImageResponse.model_validate(task["result"]) if task.get("result") else None
     return ImageTaskResultResponse(
         id=task["id"],
         status=task["status"],
+        queue_position=await _task_manager.queue_position(task["id"]),
         created=_format_time(task["created"]),
         updated=_format_time(task["updated"]),
         started=_format_time(task.get("started")),

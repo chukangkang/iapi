@@ -105,9 +105,16 @@ class ImageTaskManager:
         async with self._lock:
             return self.tasks.get(task_id)
 
-    def queue_position(self, task_id: str) -> Optional[int]:
+    async def queue_position(self, task_id: str) -> Optional[int]:
         if self.settings.task_queue_backend == "redis":
-            return None
+            redis = self.redis or self._redis_from_url()
+            close_redis = self.redis is None
+            try:
+                position = await redis.lpos(self.settings.redis_queue_name, task_id)
+                return int(position) + 1 if position is not None else None
+            finally:
+                if close_redis:
+                    await redis.aclose()
         try:
             queued_task_ids = list(self.queue._queue)
         except AttributeError:
@@ -181,9 +188,11 @@ class ImageTaskManager:
         if self.settings.task_queue_backend == "redis":
             if self.redis is None:
                 self.redis = self._redis_from_url()
-            return await self.redis.brpoplpush(
+            return await self.redis.blmove(
                 self.settings.redis_queue_name,
                 self.settings.redis_processing_queue_name,
+                src="LEFT",
+                dest="RIGHT",
                 timeout=self.settings.redis_block_timeout,
             )
         return await self.queue.get()
