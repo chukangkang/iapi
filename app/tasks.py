@@ -111,7 +111,10 @@ class ImageTaskManager:
             close_redis = self.redis is None
             try:
                 position = await redis.lpos(self.settings.redis_queue_name, task_id)
-                return int(position) + 1 if position is not None else None
+                if position is None:
+                    return None
+                queue_size = await redis.llen(self.settings.redis_queue_name)
+                return int(queue_size) - int(position)
             finally:
                 if close_redis:
                     await redis.aclose()
@@ -127,15 +130,21 @@ class ImageTaskManager:
     async def _worker_loop(self, worker_id: int) -> None:
         logger.info("Worker %s is waiting for image tasks", worker_id)
         while True:
-            task_id = await self._next_task_id()
-            if task_id is None:
-                await self._log_idle_redis_queue_state(worker_id)
-                continue
-            logger.info("Worker %s picked task %s", worker_id, task_id)
+            task_id = None
             try:
+                task_id = await self._next_task_id()
+                if task_id is None:
+                    await self._log_idle_redis_queue_state(worker_id)
+                    continue
+                logger.info("Worker %s picked task %s", worker_id, task_id)
                 await self._run_task(worker_id, task_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Worker %s loop failed", worker_id)
             finally:
-                await self._ack_task_id(task_id)
+                if task_id is not None:
+                    await self._ack_task_id(task_id)
 
     async def _run_task(self, worker_id: int, task_id: str) -> None:
         task = await self._load_task(task_id)
@@ -171,7 +180,7 @@ class ImageTaskManager:
             queue_size = await redis.llen(self.settings.redis_queue_name)
             if queue_size >= self.settings.image_queue_maxsize:
                 raise asyncio.QueueFull
-            await redis.rpush(self.settings.redis_queue_name, task_id)
+            await redis.lpush(self.settings.redis_queue_name, task_id)
             queue_size = await redis.llen(self.settings.redis_queue_name)
             processing_size = await redis.llen(self.settings.redis_processing_queue_name)
             logger.info(
@@ -188,11 +197,9 @@ class ImageTaskManager:
         if self.settings.task_queue_backend == "redis":
             if self.redis is None:
                 self.redis = self._redis_from_url()
-            return await self.redis.blmove(
+            return await self.redis.brpoplpush(
                 self.settings.redis_queue_name,
                 self.settings.redis_processing_queue_name,
-                src="LEFT",
-                dest="RIGHT",
                 timeout=self.settings.redis_block_timeout,
             )
         return await self.queue.get()
@@ -270,7 +277,7 @@ class ImageTaskManager:
                 continue
             if await self._redis_task_exists(task_id):
                 continue
-            await self.redis.rpush(self.settings.redis_queue_name, task_id)
+            await self.redis.lpush(self.settings.redis_queue_name, task_id)
             recovered += 1
         if recovered:
             logger.info("Recovered %s queued/running task(s) into Redis queue", recovered)
