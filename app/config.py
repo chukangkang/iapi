@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     redis_queue_name: str = "iapi:image_tasks"
     redis_processing_queue_name: str = "iapi:image_tasks:processing"
     redis_block_timeout: int = Field(default=5, ge=1)
+    redis_socket_connect_timeout: int = Field(default=10, ge=1)
+    redis_socket_timeout: int = Field(default=30, ge=1)
     task_db_backend: Literal["sqlite", "mysql"] = "sqlite"
     task_db_path: Path = Path("data/image_tasks.sqlite3")
     mysql_host: str = "127.0.0.1"

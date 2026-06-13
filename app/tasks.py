@@ -140,8 +140,9 @@ class ImageTaskManager:
                 await self._run_task(worker_id, task_id)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception("Worker %s loop failed", worker_id)
+                await self._reset_redis_after_error(exc)
             finally:
                 if task_id is not None:
                     await self._ack_task_id(task_id)
@@ -304,6 +305,17 @@ class ImageTaskManager:
         self._last_idle_log_at = now
         await self._log_redis_queue_state("Worker %s is still waiting for tasks" % worker_id)
 
+    async def _reset_redis_after_error(self, exc: Exception) -> None:
+        if self.settings.task_queue_backend != "redis":
+            return
+        module_name = exc.__class__.__module__
+        if not module_name.startswith("redis"):
+            return
+        if self.redis is not None:
+            await self.redis.aclose()
+            self.redis = None
+        logger.info("Redis connection reset after %s; worker will reconnect", exc.__class__.__name__)
+
     async def _redis_task_exists(self, task_id: str) -> bool:
         if self.redis is None:
             return False
@@ -316,4 +328,10 @@ class ImageTaskManager:
     def _redis_from_url(self) -> Any:
         from redis.asyncio import Redis
 
-        return Redis.from_url(self.settings.redis_url, decode_responses=True)
+        return Redis.from_url(
+            self.settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=self.settings.redis_socket_connect_timeout,
+            socket_timeout=max(self.settings.redis_socket_timeout, self.settings.redis_block_timeout + 5),
+            health_check_interval=30,
+        )
