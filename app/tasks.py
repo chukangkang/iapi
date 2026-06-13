@@ -47,6 +47,7 @@ class ImageTaskManager:
         self.store = ImageTaskMetadataStore(settings)
         self.redis: Optional[Any] = None
         self._workers: list[asyncio.Task] = []
+        self._maintenance_tasks: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
         self._last_idle_log_at = 0.0
 
@@ -59,6 +60,8 @@ class ImageTaskManager:
         if self.settings.task_queue_backend == "redis":
             self.redis = self._redis_from_url()
             await self._recover_redis_tasks()
+            if self.settings.redis_requeue_stale_enabled:
+                self._maintenance_tasks.append(asyncio.create_task(self._requeue_stale_processing_loop()))
         for worker_id in range(self.settings.image_worker_count):
             self._workers.append(asyncio.create_task(self._worker_loop(worker_id)))
         logger.info(
@@ -70,9 +73,14 @@ class ImageTaskManager:
     async def stop(self) -> None:
         for worker in self._workers:
             worker.cancel()
+        for task in self._maintenance_tasks:
+            task.cancel()
         if self._workers:
             await asyncio.gather(*self._workers, return_exceptions=True)
+        if self._maintenance_tasks:
+            await asyncio.gather(*self._maintenance_tasks, return_exceptions=True)
         self._workers.clear()
+        self._maintenance_tasks.clear()
         if self.redis is not None:
             await self.redis.aclose()
             self.redis = None
@@ -159,6 +167,7 @@ class ImageTaskManager:
         task.updated = task.started
         self.store.save(task)
         logger.info("Worker %s started task %s", worker_id, task_id)
+        heartbeat_task = asyncio.create_task(self._heartbeat_running_task(task))
         try:
             task.result = await self.runner(task.payload, task.reference_image)
             task.status = "succeeded"
@@ -172,8 +181,19 @@ class ImageTaskManager:
             task.reference_image = None
             logger.exception("Worker %s failed task %s", worker_id, task_id)
         finally:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
             task.updated = int(time.time())
             self.store.save(task)
+
+    async def _heartbeat_running_task(self, task: ImageTask) -> None:
+        while True:
+            await asyncio.sleep(self.settings.task_running_heartbeat_interval)
+            if task.status != "running":
+                return
+            task.updated = int(time.time())
+            self.store.save(task)
+            logger.debug("Heartbeat updated running task %s", task.id)
 
     async def _enqueue_redis(self, task_id: str) -> None:
         redis = self._redis_from_url()
@@ -324,6 +344,41 @@ class ImageTaskManager:
             return True
         processing = await self.redis.lpos(self.settings.redis_processing_queue_name, task_id)
         return processing is not None
+
+    async def _requeue_stale_processing_loop(self) -> None:
+        while True:
+            try:
+                await self._requeue_stale_processing_tasks()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("Redis processing recovery loop failed")
+                await self._reset_redis_after_error(exc)
+            await asyncio.sleep(self.settings.redis_requeue_interval)
+
+    async def _requeue_stale_processing_tasks(self) -> None:
+        if self.redis is None:
+            self.redis = self._redis_from_url()
+        updated_before = int(time.time()) - self.settings.redis_processing_timeout
+        stale_tasks = self.store.list_stale_running(updated_before, limit=self.settings.image_queue_maxsize)
+        requeued = 0
+        for task_row in stale_tasks:
+            task_id = task_row["id"]
+            processing_position = await self.redis.lpos(self.settings.redis_processing_queue_name, task_id)
+            if processing_position is None:
+                continue
+            removed = await self.redis.lrem(self.settings.redis_processing_queue_name, 1, task_id)
+            if not removed:
+                continue
+            if await self.redis.lpos(self.settings.redis_queue_name, task_id) is None:
+                await self.redis.lpush(self.settings.redis_queue_name, task_id)
+            requeued += 1
+        if requeued:
+            logger.warning(
+                "Requeued %s stale processing task(s), timeout=%ss",
+                requeued,
+                self.settings.redis_processing_timeout,
+            )
 
     def _redis_from_url(self) -> Any:
         from redis.asyncio import Redis

@@ -278,6 +278,10 @@ REDIS_PROCESSING_QUEUE_NAME=iapi:image_tasks:processing
 REDIS_BLOCK_TIMEOUT=5
 REDIS_SOCKET_CONNECT_TIMEOUT=10
 REDIS_SOCKET_TIMEOUT=30
+REDIS_REQUEUE_STALE_ENABLED=true
+REDIS_PROCESSING_TIMEOUT=90
+REDIS_REQUEUE_INTERVAL=30
+TASK_RUNNING_HEARTBEAT_INTERVAL=30
 TASK_DB_BACKEND=sqlite
 TASK_DB_PATH=data/image_tasks.sqlite3
 MYSQL_HOST=127.0.0.1
@@ -298,6 +302,8 @@ TASK_PUBLIC_BASE_URL=
 - `SERVICE_ROLE=api` 只提供 HTTP 接口，不启动本地 worker；`SERVICE_ROLE=worker` 可配合 `python -m app.worker` 只跑 Redis worker；`SERVICE_ROLE=all` 保持 API + worker 同进程。
 - `SERVICE_ROLE=api` 必须搭配 `TASK_QUEUE_BACKEND=redis`，否则 API 只入本地内存队列但没有 worker 消费。
 - `REDIS_SOCKET_TIMEOUT` 必须大于 `REDIS_BLOCK_TIMEOUT`；否则 Worker 空等 Redis 队列时可能出现 `Timeout reading from Redis`。
+- `REDIS_REQUEUE_STALE_ENABLED=true` 会让 Worker 定期扫描 MySQL 中 `running` 且 `updated` 超过 `REDIS_PROCESSING_TIMEOUT` 秒的任务；如果任务仍在 Redis `processing` 队列，会移回待处理队列重新执行。
+- `TASK_RUNNING_HEARTBEAT_INTERVAL` 会在长任务执行期间定期刷新 MySQL `updated`，避免正常长任务被误判为超时。
 - 使用本地内存队列时，服务重启后 `queued` / `running` 任务不会自动续跑；使用 Redis 队列时，任务会进入共享队列，适合 API/Worker 拆分部署。
 - `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `GET /v1/images/tasks/{task_id}`。
 - `queue_position` 会返回任务在待处理队列中的当前位置；任务已被 Worker 取走进入运行/处理中后会返回 `null`。

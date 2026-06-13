@@ -178,6 +178,32 @@ class ImageTaskMetadataStore:
                 ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    def list_stale_running(self, updated_before: int, limit: int = 1000) -> list[dict]:
+        with self._connect() as connection:
+            if self.backend == "mysql":
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT * FROM image_tasks
+                        WHERE status = %s AND updated < %s
+                        ORDER BY updated ASC
+                        LIMIT %s
+                        """,
+                        ("running", updated_before, limit),
+                    )
+                    rows = cursor.fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM image_tasks
+                    WHERE status = ? AND updated < ?
+                    ORDER BY updated ASC
+                    LIMIT ?
+                    """,
+                    ("running", updated_before, limit),
+                ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def delete(self, task_id: str) -> None:
         with self._connect() as connection:
             if self.backend == "mysql":
