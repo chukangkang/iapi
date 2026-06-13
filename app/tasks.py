@@ -2,11 +2,12 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from PIL import Image
 
 from app.config import Settings
+from app.image_utils import image_to_base64_png, string_to_image
 from app.task_store import ImageTaskMetadataStore
 
 
@@ -18,6 +19,7 @@ class ImageTask:
     id: str
     payload: object
     reference_image: Optional[Image.Image]
+    reference_image_data: Optional[str] = None
     status: TaskStatus = "queued"
     created: int = field(default_factory=lambda: int(time.time()))
     updated: int = field(default_factory=lambda: int(time.time()))
@@ -33,18 +35,25 @@ class ImageTaskManager:
         self,
         settings: Settings,
         runner: Callable[[object, Optional[Image.Image]], Awaitable[object]],
+        payload_factory: Optional[Callable[[dict], object]] = None,
     ):
         self.settings = settings
         self.runner = runner
+        self.payload_factory = payload_factory
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.image_queue_maxsize)
         self.tasks: dict[str, ImageTask] = {}
         self.store = ImageTaskMetadataStore(settings)
+        self.redis: Optional[Any] = None
         self._workers: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
+        if self.settings.service_role == "api":
+            return
         if self._workers:
             return
+        if self.settings.task_queue_backend == "redis":
+            self.redis = self._redis_from_url()
         for worker_id in range(self.settings.image_worker_count):
             self._workers.append(asyncio.create_task(self._worker_loop(worker_id)))
 
@@ -54,14 +63,27 @@ class ImageTaskManager:
         if self._workers:
             await asyncio.gather(*self._workers, return_exceptions=True)
         self._workers.clear()
+        if self.redis is not None:
+            await self.redis.aclose()
+            self.redis = None
 
     async def submit(self, payload: object, reference_image: Optional[Image.Image]) -> ImageTask:
-        task = ImageTask(id=f"img-{uuid.uuid4().hex}", payload=payload, reference_image=reference_image)
-        async with self._lock:
-            self.tasks[task.id] = task
+        reference_image_data = image_to_base64_png(reference_image) if reference_image is not None else None
+        task = ImageTask(
+            id=f"img-{uuid.uuid4().hex}",
+            payload=payload,
+            reference_image=reference_image,
+            reference_image_data=reference_image_data,
+        )
+        if self.settings.task_queue_backend == "memory":
+            async with self._lock:
+                self.tasks[task.id] = task
         self.store.save(task)
         try:
-            self.queue.put_nowait(task.id)
+            if self.settings.task_queue_backend == "redis":
+                await self._enqueue_redis(task.id)
+            else:
+                self.queue.put_nowait(task.id)
         except asyncio.QueueFull as exc:
             async with self._lock:
                 self.tasks.pop(task.id, None)
@@ -74,6 +96,8 @@ class ImageTaskManager:
             return self.tasks.get(task_id)
 
     def queue_position(self, task_id: str) -> Optional[int]:
+        if self.settings.task_queue_backend == "redis":
+            return None
         try:
             queued_task_ids = list(self.queue._queue)
         except AttributeError:
@@ -85,14 +109,16 @@ class ImageTaskManager:
 
     async def _worker_loop(self, worker_id: int) -> None:
         while True:
-            task_id = await self.queue.get()
+            task_id = await self._next_task_id()
+            if task_id is None:
+                continue
             try:
                 await self._run_task(worker_id, task_id)
             finally:
-                self.queue.task_done()
+                await self._ack_task_id(task_id)
 
     async def _run_task(self, worker_id: int, task_id: str) -> None:
-        task = await self.get(task_id)
+        task = await self._load_task(task_id)
         if task is None:
             return
 
@@ -114,3 +140,65 @@ class ImageTaskManager:
         finally:
             task.updated = int(time.time())
             self.store.save(task)
+
+    async def _enqueue_redis(self, task_id: str) -> None:
+        redis = self._redis_from_url()
+        try:
+            queue_size = await redis.llen(self.settings.redis_queue_name)
+            if queue_size >= self.settings.image_queue_maxsize:
+                raise asyncio.QueueFull
+            await redis.rpush(self.settings.redis_queue_name, task_id)
+        finally:
+            await redis.aclose()
+
+    async def _next_task_id(self) -> Optional[str]:
+        if self.settings.task_queue_backend == "redis":
+            if self.redis is None:
+                self.redis = self._redis_from_url()
+            return await self.redis.brpoplpush(
+                self.settings.redis_queue_name,
+                self.settings.redis_processing_queue_name,
+                timeout=self.settings.redis_block_timeout,
+            )
+        return await self.queue.get()
+
+    async def _ack_task_id(self, task_id: str) -> None:
+        if self.settings.task_queue_backend == "redis":
+            if self.redis is not None:
+                await self.redis.lrem(self.settings.redis_processing_queue_name, 1, task_id)
+            return
+        self.queue.task_done()
+
+    async def _load_task(self, task_id: str) -> Optional[ImageTask]:
+        task = await self.get(task_id)
+        if task is not None:
+            return task
+
+        task_metadata = self.store.get(task_id)
+        if task_metadata is None or task_metadata.get("payload") is None:
+            return None
+
+        payload = task_metadata["payload"]
+        if self.payload_factory is not None:
+            payload = self.payload_factory(payload)
+        reference_image_data = task_metadata.get("reference_image")
+        reference_image = string_to_image(reference_image_data)
+        return ImageTask(
+            id=task_metadata["id"],
+            payload=payload,
+            reference_image=reference_image,
+            reference_image_data=reference_image_data,
+            status=task_metadata["status"],
+            created=task_metadata["created"],
+            updated=task_metadata["updated"],
+            started=task_metadata.get("started"),
+            completed=task_metadata.get("completed"),
+            worker_id=task_metadata.get("worker_id"),
+            result=task_metadata.get("result"),
+            error=task_metadata.get("error"),
+        )
+
+    def _redis_from_url(self) -> Any:
+        from redis.asyncio import Redis
+
+        return Redis.from_url(self.settings.redis_url, decode_responses=True)

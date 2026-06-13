@@ -105,10 +105,38 @@ class ChatCompletionRequest(BaseModel):
 settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
-_service = FluxImageService(settings)
-_qwen_edit_service = QwenImageEditService(settings)
-_upscale_service = ImageUpscaleService(settings)
-_storage = ImageStorage(settings)
+_service: Optional[FluxImageService] = None
+_qwen_edit_service: Optional[QwenImageEditService] = None
+_upscale_service: Optional[ImageUpscaleService] = None
+_storage: Optional[ImageStorage] = None
+
+
+def _get_flux_service() -> FluxImageService:
+    global _service
+    if _service is None:
+        _service = FluxImageService(settings)
+    return _service
+
+
+def _get_qwen_edit_service() -> QwenImageEditService:
+    global _qwen_edit_service
+    if _qwen_edit_service is None:
+        _qwen_edit_service = QwenImageEditService(settings)
+    return _qwen_edit_service
+
+
+def _get_upscale_service() -> ImageUpscaleService:
+    global _upscale_service
+    if _upscale_service is None:
+        _upscale_service = ImageUpscaleService(settings)
+    return _upscale_service
+
+
+def _get_storage() -> ImageStorage:
+    global _storage
+    if _storage is None:
+        _storage = ImageStorage(settings)
+    return _storage
 
 
 async def _run_task_payload(payload: object, reference_image) -> ImageResponse:
@@ -119,7 +147,7 @@ async def _run_task_payload(payload: object, reference_image) -> ImageResponse:
     )
 
 
-_task_manager = ImageTaskManager(settings, _run_task_payload)
+_task_manager = ImageTaskManager(settings, _run_task_payload, ImageGenerationRequest.model_validate)
 
 
 @asynccontextmanager
@@ -414,7 +442,7 @@ async def _run_image_request(
             metadata["qwen_unblur_upscale_lora_path"] = app_settings.qwen_unblur_upscale_lora_path
             metadata["qwen_unblur_upscale_lora_weight_name"] = app_settings.qwen_unblur_upscale_lora_weight_name
             metadata["qwen_unblur_upscale_lora_scale"] = app_settings.qwen_unblur_upscale_lora_scale
-        image = await _qwen_edit_service.edit(
+        image = await _get_qwen_edit_service().edit(
             prompt=qwen_prompt,
             negative_prompt=negative_prompt,
             image=reference_image,
@@ -429,7 +457,7 @@ async def _run_image_request(
             lora_scale=app_settings.qwen_unblur_upscale_lora_scale,
         )
         upscale_method = "realesrgan" if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} else "pixel"
-        image = await _upscale_service.upscale(
+        image = await _get_upscale_service().upscale(
             image,
             width=output_width,
             height=output_height,
@@ -442,7 +470,7 @@ async def _run_image_request(
 
     if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
-        image = await _upscale_service.upscale(
+        image = await _get_upscale_service().upscale(
             reference_image,
             width=output_width,
             height=output_height,
@@ -457,7 +485,7 @@ async def _run_image_request(
         reference_image = image
 
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
-    image = await _service.generate(
+    image = await _get_flux_service().generate(
         prompt=payload.prompt,
         negative_prompt=negative_prompt,
         image=reference_image,
@@ -481,7 +509,7 @@ def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[d
         data.b64_json = image_to_base64_png(image)
     else:
         filename = f"{int(time.time())}-{uuid.uuid4().hex}.png"
-        data.url = _storage.store_png(image, filename).url
+        data.url = _get_storage().store_png(image, filename).url
 
     return ImageResponse(created=_format_time(int(time.time())), data=[data])
 

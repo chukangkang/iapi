@@ -250,6 +250,12 @@ ALIYUN_REGION_ID=cn-hangzhou
 ```env
 IMAGE_WORKER_COUNT=1
 IMAGE_QUEUE_MAXSIZE=100
+SERVICE_ROLE=all
+TASK_QUEUE_BACKEND=memory
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_QUEUE_NAME=iapi:image_tasks
+REDIS_PROCESSING_QUEUE_NAME=iapi:image_tasks:processing
+REDIS_BLOCK_TIMEOUT=5
 TASK_DB_BACKEND=sqlite
 TASK_DB_PATH=data/image_tasks.sqlite3
 MYSQL_HOST=127.0.0.1
@@ -266,8 +272,42 @@ TASK_PUBLIC_BASE_URL=
 - 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
 - `TASK_DB_BACKEND=sqlite` 时，任务元数据会保存到 `TASK_DB_PATH` 指定的 SQLite 文件中；`TASK_DB_BACKEND=mysql` 时，会使用 `MYSQL_*` 配置连接 MySQL，并自动创建 `image_tasks` 表。
 - 使用 MySQL 前需先创建数据库，例如 `MYSQL_DATABASE=iapi` 对应的库；服务只负责创建任务表，不会自动创建数据库。
-- 当前待执行队列仍在内存中，服务重启时 `queued` / `running` 任务不会自动续跑；如需生产级可靠队列，可接 Redis/RQ/Celery。
+- `TASK_QUEUE_BACKEND=memory` 保持单进程本地队列；`TASK_QUEUE_BACKEND=redis` 会使用远程 Redis 队列，适合 API/Worker 拆分或多节点部署。
+- `SERVICE_ROLE=api` 只提供 HTTP 接口，不启动本地 worker；`SERVICE_ROLE=worker` 可配合 `python -m app.worker` 只跑 Redis worker；`SERVICE_ROLE=all` 保持 API + worker 同进程。
+- 使用本地内存队列时，服务重启后 `queued` / `running` 任务不会自动续跑；使用 Redis 队列时，任务会进入共享队列，适合 API/Worker 拆分部署。
 - `TASK_PUBLIC_BASE_URL` 可配置为 FastAPI 后端公网地址；任务查询统一走 `GET /v1/images/tasks/{task_id}`。
+
+生产推荐拆成两个启动角色，并共用同一套代码：
+
+API 节点配置：
+
+```env
+SERVICE_ROLE=api
+TASK_DB_BACKEND=mysql
+TASK_QUEUE_BACKEND=redis
+```
+
+启动 API：
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Worker 节点配置：
+
+```env
+SERVICE_ROLE=worker
+TASK_DB_BACKEND=mysql
+TASK_QUEUE_BACKEND=redis
+```
+
+启动 Worker：
+
+```bash
+python -m app.worker
+```
+
+API 节点不会在启动时加载模型；Worker 执行任务时会按需加载模型。多节点生产环境建议同时配置 OSS，避免输入/输出图片依赖某台机器的本地磁盘。
 
 ## 运行
 

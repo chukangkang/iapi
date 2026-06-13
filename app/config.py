@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     realesrgan_pre_pad: int = Field(default=0, ge=0)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
+    service_role: Literal["api", "worker", "all"] = "all"
+    task_queue_backend: Literal["memory", "redis"] = "memory"
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    redis_queue_name: str = "iapi:image_tasks"
+    redis_processing_queue_name: str = "iapi:image_tasks:processing"
+    redis_block_timeout: int = Field(default=5, ge=1)
     task_db_backend: Literal["sqlite", "mysql"] = "sqlite"
     task_db_path: Path = Path("data/image_tasks.sqlite3")
     mysql_host: str = "127.0.0.1"

@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 pydantic-settings>=2.4.0
 pymysql>=1.1.1
+redis>=5.0.0
 pillow>=10.4.0
 torch>=2.6.0
 accelerate>=0.34.0
