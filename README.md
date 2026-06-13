@@ -331,6 +331,8 @@ python -m app.worker
 
 Worker 启动后会打印当前 `SERVICE_ROLE`、`TASK_QUEUE_BACKEND`、`TASK_DB_BACKEND`、Redis 队列名等信息；如果 Redis 队列里暂时没有任务，会停留在等待状态，这是正常的。收到任务时会输出 picked/started/completed/failed 日志。
 
+如果任务已经写入 MySQL，但 Worker 没有执行，请先确认 API 和 Worker 的 `REDIS_URL`、`REDIS_QUEUE_NAME`、`REDIS_PROCESSING_QUEUE_NAME` 完全一致。API 成功入队时会打印 `Enqueued task ... queue_size=...`；Worker 等待时会定期打印 Redis 队列长度。也可以直接在 Redis 上检查：`LLEN iapi:image_tasks` 和 `LLEN iapi:image_tasks:processing`。
+
 API 节点不会在启动时加载模型；Worker 执行任务时会按需加载模型。多节点生产环境建议同时配置 OSS，避免输入/输出图片依赖某台机器的本地磁盘。
 
 ## 运行

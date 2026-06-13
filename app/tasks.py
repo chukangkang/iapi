@@ -48,6 +48,7 @@ class ImageTaskManager:
         self.redis: Optional[Any] = None
         self._workers: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
+        self._last_idle_log_at = 0.0
 
     async def start(self) -> None:
         if self.settings.service_role == "api":
@@ -121,7 +122,7 @@ class ImageTaskManager:
         while True:
             task_id = await self._next_task_id()
             if task_id is None:
-                logger.debug("Worker %s is still waiting for tasks", worker_id)
+                await self._log_idle_redis_queue_state(worker_id)
                 continue
             logger.info("Worker %s picked task %s", worker_id, task_id)
             try:
@@ -132,6 +133,7 @@ class ImageTaskManager:
     async def _run_task(self, worker_id: int, task_id: str) -> None:
         task = await self._load_task(task_id)
         if task is None:
+            await self._fail_unloadable_task(worker_id, task_id)
             return
 
         task.status = "running"
@@ -163,6 +165,15 @@ class ImageTaskManager:
             if queue_size >= self.settings.image_queue_maxsize:
                 raise asyncio.QueueFull
             await redis.rpush(self.settings.redis_queue_name, task_id)
+            queue_size = await redis.llen(self.settings.redis_queue_name)
+            processing_size = await redis.llen(self.settings.redis_processing_queue_name)
+            logger.info(
+                "Enqueued task %s to Redis queue=%s queue_size=%s processing_size=%s",
+                task_id,
+                self.settings.redis_queue_name,
+                queue_size,
+                processing_size,
+            )
         finally:
             await redis.aclose()
 
@@ -190,7 +201,11 @@ class ImageTaskManager:
             return task
 
         task_metadata = self.store.get(task_id)
-        if task_metadata is None or task_metadata.get("payload") is None:
+        if task_metadata is None:
+            logger.warning("Task %s was picked from queue but does not exist in metadata store", task_id)
+            return None
+        if task_metadata.get("payload") is None:
+            logger.warning("Task %s has no payload_json and cannot be executed", task_id)
             return None
 
         payload = task_metadata["payload"]
@@ -213,6 +228,27 @@ class ImageTaskManager:
             error=task_metadata.get("error"),
         )
 
+    async def _fail_unloadable_task(self, worker_id: int, task_id: str) -> None:
+        task_metadata = self.store.get(task_id)
+        if task_metadata is None:
+            return
+        failed_task = ImageTask(
+            id=task_metadata["id"],
+            payload=task_metadata.get("payload"),
+            reference_image=None,
+            reference_image_data=task_metadata.get("reference_image"),
+            status="failed",
+            created=task_metadata["created"],
+            updated=int(time.time()),
+            started=task_metadata.get("started") or int(time.time()),
+            completed=int(time.time()),
+            worker_id=worker_id,
+            result=task_metadata.get("result"),
+            error="Task payload is missing; submit the task again after Redis/MySQL configuration is fixed.",
+        )
+        self.store.save(failed_task)
+        logger.error("Worker %s marked unloadable task %s as failed", worker_id, task_id)
+
     async def _recover_redis_tasks(self) -> None:
         if self.redis is None:
             return
@@ -220,12 +256,37 @@ class ImageTaskManager:
         recovered = 0
         for task_row in task_rows:
             task_id = task_row["id"]
+            if task_row.get("payload") is None:
+                logger.warning("Skipping task %s during recovery because payload_json is missing", task_id)
+                continue
             if await self._redis_task_exists(task_id):
                 continue
             await self.redis.rpush(self.settings.redis_queue_name, task_id)
             recovered += 1
         if recovered:
             logger.info("Recovered %s queued/running task(s) into Redis queue", recovered)
+        await self._log_redis_queue_state("Redis queue state after recovery")
+
+    async def _log_redis_queue_state(self, message: str) -> None:
+        if self.redis is None:
+            return
+        queue_size = await self.redis.llen(self.settings.redis_queue_name)
+        processing_size = await self.redis.llen(self.settings.redis_processing_queue_name)
+        logger.info(
+            "%s: queue=%s queue_size=%s processing_queue=%s processing_size=%s",
+            message,
+            self.settings.redis_queue_name,
+            queue_size,
+            self.settings.redis_processing_queue_name,
+            processing_size,
+        )
+
+    async def _log_idle_redis_queue_state(self, worker_id: int) -> None:
+        now = time.time()
+        if now - self._last_idle_log_at < 60:
+            return
+        self._last_idle_log_at = now
+        await self._log_redis_queue_state("Worker %s is still waiting for tasks" % worker_id)
 
     async def _redis_task_exists(self, task_id: str) -> bool:
         if self.redis is None:
