@@ -1,6 +1,7 @@
 from functools import lru_cache
 import os
 from pathlib import Path
+import socket
 from typing import Literal, Optional
 
 from pydantic import Field, computed_field
@@ -59,6 +60,7 @@ class Settings(BaseSettings):
     realesrgan_pre_pad: int = Field(default=0, ge=0)
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
+    worker_name: str = ""
     service_role: Literal["api", "worker", "all"] = "all"
     task_queue_backend: Literal["memory", "redis"] = "memory"
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -122,6 +124,11 @@ class Settings(BaseSettings):
     @property
     def mysql_password_or_none(self) -> Optional[str]:
         return self.mysql_password or None
+
+    @computed_field
+    @property
+    def resolved_worker_name(self) -> str:
+        return self.worker_name.strip() or socket.gethostname()
 
 
 @lru_cache

@@ -49,6 +49,7 @@ class ImageTaskMetadataStore:
                             started BIGINT NULL,
                             completed BIGINT NULL,
                             worker_id INT NULL,
+                            worker_name VARCHAR(128) NULL,
                             payload_json JSON NULL,
                             reference_image LONGTEXT NULL,
                             result_json JSON NULL,
@@ -59,6 +60,7 @@ class ImageTaskMetadataStore:
                     )
                     self._ensure_mysql_column(cursor, "payload_json", "JSON NULL")
                     self._ensure_mysql_column(cursor, "reference_image", "LONGTEXT NULL")
+                    self._ensure_mysql_column(cursor, "worker_name", "VARCHAR(128) NULL")
                 connection.commit()
                 return
 
@@ -72,6 +74,7 @@ class ImageTaskMetadataStore:
                     started INTEGER,
                     completed INTEGER,
                     worker_id INTEGER,
+                    worker_name TEXT,
                     payload_json TEXT,
                     reference_image TEXT,
                     result_json TEXT,
@@ -82,6 +85,7 @@ class ImageTaskMetadataStore:
             connection.execute("CREATE INDEX IF NOT EXISTS idx_image_tasks_status ON image_tasks(status)")
             self._ensure_sqlite_column(connection, "payload_json", "TEXT")
             self._ensure_sqlite_column(connection, "reference_image", "TEXT")
+            self._ensure_sqlite_column(connection, "worker_name", "TEXT")
 
     def save(self, task: object) -> None:
         payload_json = self._payload_to_json(getattr(task, "payload", None))
@@ -96,6 +100,7 @@ class ImageTaskMetadataStore:
                 getattr(task, "started"),
                 getattr(task, "completed"),
                 getattr(task, "worker_id"),
+                getattr(task, "worker_name", None),
                 payload_json,
                 reference_image,
                 result_json,
@@ -106,14 +111,15 @@ class ImageTaskMetadataStore:
                     cursor.execute(
                         """
                         INSERT INTO image_tasks (
-                            id, status, created, updated, started, completed, worker_id, payload_json, reference_image, result_json, error
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            id, status, created, updated, started, completed, worker_id, worker_name, payload_json, reference_image, result_json, error
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             status=VALUES(status),
                             updated=VALUES(updated),
                             started=VALUES(started),
                             completed=VALUES(completed),
                             worker_id=VALUES(worker_id),
+                            worker_name=VALUES(worker_name),
                             payload_json=COALESCE(VALUES(payload_json), payload_json),
                             reference_image=COALESCE(VALUES(reference_image), reference_image),
                             result_json=VALUES(result_json),
@@ -127,14 +133,15 @@ class ImageTaskMetadataStore:
             connection.execute(
                 """
                 INSERT INTO image_tasks (
-                    id, status, created, updated, started, completed, worker_id, payload_json, reference_image, result_json, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, status, created, updated, started, completed, worker_id, worker_name, payload_json, reference_image, result_json, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     status=excluded.status,
                     updated=excluded.updated,
                     started=excluded.started,
                     completed=excluded.completed,
                     worker_id=excluded.worker_id,
+                    worker_name=excluded.worker_name,
                     payload_json=COALESCE(excluded.payload_json, payload_json),
                     reference_image=COALESCE(excluded.reference_image, reference_image),
                     result_json=excluded.result_json,

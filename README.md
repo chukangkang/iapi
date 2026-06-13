@@ -271,6 +271,7 @@ ALIYUN_REGION_ID=cn-hangzhou
 IMAGE_WORKER_COUNT=1
 IMAGE_QUEUE_MAXSIZE=100
 SERVICE_ROLE=all
+WORKER_NAME=
 TASK_QUEUE_BACKEND=memory
 REDIS_URL=redis://127.0.0.1:6379/0
 REDIS_QUEUE_NAME=iapi:image_tasks
@@ -295,6 +296,7 @@ TASK_PUBLIC_BASE_URL=
 ```
 
 - 单张 4090 建议保持 `IMAGE_WORKER_COUNT=1`，避免并发推理导致 OOM。
+- `WORKER_NAME` 用于标识具体 Worker 节点；为空时自动使用主机名，多机部署建议显式配置为 `gpu-node-01`、`gpu-node-02` 这类稳定名称。
 - 多 GPU 时可把 `IMAGE_WORKER_COUNT` 设置为 GPU 数量；当前实现会启动多个 worker，但 Diffusers pipeline 仍由同一进程管理，生产多 GPU 更推荐用“每张卡一个进程 + 不同 `DEVICE=cuda:N` + 上层负载均衡”。
 - `TASK_DB_BACKEND=sqlite` 时，任务元数据会保存到 `TASK_DB_PATH` 指定的 SQLite 文件中；`TASK_DB_BACKEND=mysql` 时，会使用 `MYSQL_*` 配置连接 MySQL，并自动创建 `image_tasks` 表。
 - 使用 MySQL 前需先创建数据库，例如 `MYSQL_DATABASE=iapi` 对应的库；服务只负责创建任务表，不会自动创建数据库。

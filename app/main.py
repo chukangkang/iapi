@@ -85,6 +85,7 @@ class ImageTaskResultResponse(BaseModel):
     started: Optional[str] = None
     completed: Optional[str] = None
     worker_id: Optional[int] = None
+    worker_name: Optional[str] = None
     result: Optional[ImageResponse] = None
     error: Optional[str] = None
 
@@ -347,6 +348,7 @@ async def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
         started=_format_time(task.started),
         completed=_format_time(task.completed),
         worker_id=task.worker_id,
+        worker_name=task.worker_name,
         result=task.result,
         error=task.error,
     )
@@ -363,6 +365,7 @@ async def _task_metadata_to_result_response(task: dict[str, Any]) -> ImageTaskRe
         started=_format_time(task.get("started")),
         completed=_format_time(task.get("completed")),
         worker_id=task.get("worker_id"),
+        worker_name=task.get("worker_name"),
         result=result,
         error=task.get("error"),
     )
@@ -540,7 +543,7 @@ def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[d
 def _format_time(value: Optional[int]) -> Optional[str]:
     if value is None:
         return None
-    return datetime.fromtimestamp(value, tz=SHANGHAI_TIMEZONE).isoformat()
+    return datetime.fromtimestamp(value, tz=SHANGHAI_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Settings) -> None:

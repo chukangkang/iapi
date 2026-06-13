@@ -28,6 +28,7 @@ class ImageTask:
     started: Optional[int] = None
     completed: Optional[int] = None
     worker_id: Optional[int] = None
+    worker_name: Optional[str] = None
     result: Optional[object] = None
     error: Optional[str] = None
 
@@ -163,23 +164,24 @@ class ImageTaskManager:
 
         task.status = "running"
         task.worker_id = worker_id
+        task.worker_name = self.settings.resolved_worker_name
         task.started = int(time.time())
         task.updated = task.started
         self.store.save(task)
-        logger.info("Worker %s started task %s", worker_id, task_id)
+        logger.info("Worker %s/%s started task %s", self.settings.resolved_worker_name, worker_id, task_id)
         heartbeat_task = asyncio.create_task(self._heartbeat_running_task(task))
         try:
             task.result = await self.runner(task.payload, task.reference_image)
             task.status = "succeeded"
             task.completed = int(time.time())
             task.reference_image = None
-            logger.info("Worker %s completed task %s", worker_id, task_id)
+            logger.info("Worker %s/%s completed task %s", self.settings.resolved_worker_name, worker_id, task_id)
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)
             task.completed = int(time.time())
             task.reference_image = None
-            logger.exception("Worker %s failed task %s", worker_id, task_id)
+            logger.exception("Worker %s/%s failed task %s", self.settings.resolved_worker_name, worker_id, task_id)
         finally:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
@@ -261,6 +263,7 @@ class ImageTaskManager:
             started=task_metadata.get("started"),
             completed=task_metadata.get("completed"),
             worker_id=task_metadata.get("worker_id"),
+            worker_name=task_metadata.get("worker_name"),
             result=task_metadata.get("result"),
             error=task_metadata.get("error"),
         )
@@ -280,6 +283,7 @@ class ImageTaskManager:
             started=task_metadata.get("started") or int(time.time()),
             completed=int(time.time()),
             worker_id=worker_id,
+            worker_name=self.settings.resolved_worker_name,
             result=task_metadata.get("result"),
             error="Task payload is missing; submit the task again after Redis/MySQL configuration is fixed.",
         )
