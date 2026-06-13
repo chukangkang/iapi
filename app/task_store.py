@@ -158,6 +158,26 @@ class ImageTaskMetadataStore:
         result["result"] = json.loads(result.pop("result_json")) if result.get("result_json") else None
         return result
 
+    def list_by_status(self, statuses: list[str], limit: int = 1000) -> list[dict]:
+        if not statuses:
+            return []
+        with self._connect() as connection:
+            if self.backend == "mysql":
+                placeholders = ", ".join(["%s"] * len(statuses))
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"SELECT * FROM image_tasks WHERE status IN ({placeholders}) ORDER BY created ASC LIMIT %s",
+                        (*statuses, limit),
+                    )
+                    rows = cursor.fetchall()
+            else:
+                placeholders = ", ".join(["?"] * len(statuses))
+                rows = connection.execute(
+                    f"SELECT * FROM image_tasks WHERE status IN ({placeholders}) ORDER BY created ASC LIMIT ?",
+                    (*statuses, limit),
+                ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def delete(self, task_id: str) -> None:
         with self._connect() as connection:
             if self.backend == "mysql":
@@ -167,6 +187,12 @@ class ImageTaskMetadataStore:
                 return
 
             connection.execute("DELETE FROM image_tasks WHERE id = ?", (task_id,))
+
+    def _row_to_dict(self, row: Any) -> dict:
+        result = dict(row)
+        result["payload"] = json.loads(result.pop("payload_json")) if result.get("payload_json") else None
+        result["result"] = json.loads(result.pop("result_json")) if result.get("result_json") else None
+        return result
 
     def _result_to_json(self, result: Any) -> Optional[str]:
         if result is None:

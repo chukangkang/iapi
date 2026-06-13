@@ -57,6 +57,7 @@ class ImageTaskManager:
             return
         if self.settings.task_queue_backend == "redis":
             self.redis = self._redis_from_url()
+            await self._recover_redis_tasks()
         for worker_id in range(self.settings.image_worker_count):
             self._workers.append(asyncio.create_task(self._worker_loop(worker_id)))
         logger.info(
@@ -92,11 +93,11 @@ class ImageTaskManager:
                 await self._enqueue_redis(task.id)
             else:
                 self.queue.put_nowait(task.id)
-        except asyncio.QueueFull as exc:
+        except Exception:
             async with self._lock:
                 self.tasks.pop(task.id, None)
             self.store.delete(task.id)
-            raise exc
+            raise
         return task
 
     async def get(self, task_id: str) -> Optional[ImageTask]:
@@ -211,6 +212,29 @@ class ImageTaskManager:
             result=task_metadata.get("result"),
             error=task_metadata.get("error"),
         )
+
+    async def _recover_redis_tasks(self) -> None:
+        if self.redis is None:
+            return
+        task_rows = self.store.list_by_status(["queued", "running"], limit=self.settings.image_queue_maxsize)
+        recovered = 0
+        for task_row in task_rows:
+            task_id = task_row["id"]
+            if await self._redis_task_exists(task_id):
+                continue
+            await self.redis.rpush(self.settings.redis_queue_name, task_id)
+            recovered += 1
+        if recovered:
+            logger.info("Recovered %s queued/running task(s) into Redis queue", recovered)
+
+    async def _redis_task_exists(self, task_id: str) -> bool:
+        if self.redis is None:
+            return False
+        queued = await self.redis.lpos(self.settings.redis_queue_name, task_id)
+        if queued is not None:
+            return True
+        processing = await self.redis.lpos(self.settings.redis_processing_queue_name, task_id)
+        return processing is not None
 
     def _redis_from_url(self) -> Any:
         from redis.asyncio import Redis
