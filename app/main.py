@@ -31,6 +31,8 @@ SIZE_PRESETS = {
 
 PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height|qwen_edit_strength)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
 SHANGHAI_TIMEZONE = timezone(timedelta(hours=8))
+PERSON_PROMPT_PATTERN = re.compile(r"人|男|女|孩|老人|头像|肖像|portrait|person|people|man|woman|girl|boy|child|face", re.IGNORECASE)
+ETHNICITY_PROMPT_PATTERN = re.compile(r"中国|华人|亚洲|东亚|欧美|美国|欧洲|白人|黑人|日本|韩国|外国|Chinese|Asian|East Asian|Western|American|European|Caucasian|Black|African|Japanese|Korean|foreigner", re.IGNORECASE)
 
 
 class ImageGenerationRequest(BaseModel):
@@ -436,9 +438,12 @@ async def _run_image_request(
     output_width, output_height = _resolve_dimensions(payload, app_settings)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
+    prompt = _enhance_prompt(payload.prompt, reference_image, app_settings)
     negative_prompt = _merge_negative_prompt(app_settings.default_negative_prompt, payload.negative_prompt)
     metadata = {
         "enhance_mode": enhance_mode,
+        "prompt": prompt,
+        "original_prompt": payload.prompt,
         "target_width": output_width,
         "target_height": output_height,
         "source_width": reference_image.width if reference_image is not None else None,
@@ -458,7 +463,7 @@ async def _run_image_request(
         generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
         qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
-        qwen_prompt = _qwen_unblur_upscale_prompt(payload.prompt, app_settings) if is_unblur_upscale else payload.prompt
+        qwen_prompt = _qwen_unblur_upscale_prompt(prompt, app_settings) if is_unblur_upscale else prompt
         metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
         metadata["qwen_edit_strength"] = qwen_strength
         metadata["qwen_edit_prompt"] = qwen_prompt
@@ -512,7 +517,7 @@ async def _run_image_request(
 
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     image = await _get_flux_service().generate(
-        prompt=payload.prompt,
+        prompt=prompt,
         negative_prompt=negative_prompt,
         image=reference_image,
         width=generation_width,
@@ -659,6 +664,23 @@ def _split_negative_prompt(prompt: Optional[str]) -> list[str]:
     if not prompt:
         return []
     return [term.strip() for term in re.split(r"[,，;；\n]+", prompt) if term.strip()]
+
+
+def _enhance_prompt(prompt: Optional[str], reference_image, app_settings: Settings) -> str:
+    user_prompt = (prompt or "").strip()
+    if not app_settings.prompt_enhance_enabled or reference_image is not None:
+        return user_prompt
+    if len(user_prompt) > app_settings.prompt_enhance_short_max_chars:
+        return user_prompt
+
+    additions = []
+    if PERSON_PROMPT_PATTERN.search(user_prompt) and not ETHNICITY_PROMPT_PATTERN.search(user_prompt):
+        additions.append(app_settings.prompt_enhance_person_suffix)
+    if app_settings.prompt_enhance_suffix:
+        additions.append(app_settings.prompt_enhance_suffix)
+    if not additions:
+        return user_prompt
+    return ", ".join([user_prompt, *additions])
 
 
 def _qwen_unblur_upscale_prompt(prompt: Optional[str], app_settings: Settings) -> str:

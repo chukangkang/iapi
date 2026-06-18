@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     default_height: int = Field(default=768, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
     default_negative_prompt: str = "extra hands, extra fingers, malformed hands, bad hands, fused fingers, missing fingers, extra arms, deformed limbs, mutated body, bad anatomy, disfigured, distorted face, low quality"
+    prompt_enhance_enabled: bool = True
+    prompt_enhance_short_max_chars: int = Field(default=80, ge=1)
+    prompt_enhance_suffix: str = "high quality, detailed, natural lighting, realistic, clean composition"
+    prompt_enhance_person_suffix: str = "Chinese person, East Asian facial features, contemporary Chinese style"
     default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
