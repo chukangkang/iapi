@@ -568,7 +568,7 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="image is required for Qwen Edit enhance modes.",
         )
-    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}:
+    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} and app_settings.service_role != "api":
         from app.upscale_service import realesrgan_available, realesrgan_import_error
 
         if not realesrgan_available():
