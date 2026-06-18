@@ -79,7 +79,7 @@ class QwenImageEditService:
             kwargs["negative_prompt"] = negative_prompt
         elif "negative_prompt" in signature:
             kwargs["negative_prompt"] = " "
-        if "guidance_scale" in signature:
+        if "guidance_scale" in signature and guidance_scale != 1.0:
             kwargs["guidance_scale"] = guidance_scale
         if "true_cfg_scale" in signature:
             kwargs["true_cfg_scale"] = self.settings.qwen_edit_true_cfg_scale
@@ -118,6 +118,8 @@ class QwenImageEditService:
         return adapter_name
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
+        if self.settings.qwen_edit_input_fit_mode == "cover":
+            return ImageOps.fit(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         color = self.settings.qwen_edit_background_color
         return ImageOps.pad(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, color=color, centering=(0.5, 0.5))
 

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
     qwen_edit_scale_to_length: int = Field(default=2048, ge=64)
     qwen_edit_round_to_multiple: int = Field(default=16, ge=1)
+    qwen_edit_input_fit_mode: Literal["contain", "cover"] = "contain"
     qwen_edit_background_color: str = "#000000"
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"
     qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "balanced"
