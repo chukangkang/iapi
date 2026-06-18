@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+from pathlib import Path
 from typing import Optional
 
 from PIL import Image, ImageOps
@@ -158,7 +159,7 @@ class QwenImageEditService:
         return pipe
 
     def _quantization_config(self, diffusers):
-        if self.settings.qwen_edit_quantization == "none":
+        if self.settings.qwen_edit_quantization == "none" or self._is_prequantized_model_path():
             return None
         pipeline_quantization_config = getattr(diffusers, "PipelineQuantizationConfig", None)
         if pipeline_quantization_config is not None:
@@ -180,6 +181,10 @@ class QwenImageEditService:
         if self.settings.qwen_edit_quantization == "8bit":
             return BitsAndBytesConfig(load_in_8bit=True)
         return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self._dtype)
+
+    def _is_prequantized_model_path(self) -> bool:
+        model_path = Path(self.settings.qwen_edit_model_path)
+        return model_path.is_dir() and (model_path / "quantization_info.json").exists()
 
     def _resolve_device(self, torch) -> str:
         if self.settings.device != "auto":
