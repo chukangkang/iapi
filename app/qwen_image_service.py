@@ -22,12 +22,17 @@ class ModelManager:
         self._active_model: Optional[str] = None
         self._model_sizes: dict[str, float] = {}  # MB
         self._last_access: dict[str, float] = {}
+        self._cpu_offload_models: set[str] = set()
         
-    def register_model(self, name: str, pipe: any, size_mb: float) -> None:
+    def register_model(self, name: str, pipe: any, size_mb: float, *, cpu_offload: bool = False) -> None:
         """注册模型"""
         self._models[name] = pipe
         self._model_sizes[name] = size_mb
         self._last_access[name] = time.time()
+        if cpu_offload:
+            self._cpu_offload_models.add(name)
+        else:
+            self._cpu_offload_models.discard(name)
         logger.info(f"Registered model '{name}': {size_mb:.1f} MB")
     
     def unregister_model(self, name: str) -> None:
@@ -36,7 +41,7 @@ class ModelManager:
             pipe = self._models.pop(name)
             # 卸载到CPU
             try:
-                if hasattr(pipe, 'to'):
+                if name not in self._cpu_offload_models and hasattr(pipe, 'to'):
                     pipe.to('cpu')
                 logger.info(f"Unloaded model '{name}' to CPU")
             except Exception as e:
@@ -44,6 +49,7 @@ class ModelManager:
             del pipe
             self._model_sizes.pop(name, None)
             self._last_access.pop(name, None)
+            self._cpu_offload_models.discard(name)
     
     def activate_model(self, name: str) -> bool:
         """激活模型,如果需要则从CPU加载到GPU"""
@@ -62,11 +68,14 @@ class ModelManager:
         # 加载到GPU
         pipe = self._models[name]
         try:
-            if hasattr(pipe, 'to'):
+            if name not in self._cpu_offload_models and hasattr(pipe, 'to'):
                 pipe.to('cuda')
             self._active_model = name
             self._last_access[name] = time.time()
-            logger.info(f"Activated model '{name}' on GPU")
+            if name in self._cpu_offload_models:
+                logger.info(f"Activated model '{name}' with CPU offload")
+            else:
+                logger.info(f"Activated model '{name}' on GPU")
             return True
         except Exception as e:
             logger.error(f"Failed to activate model '{name}': {e}")
@@ -76,7 +85,7 @@ class ModelManager:
         """卸载当前活跃模型"""
         if self._active_model:
             pipe = self._models.get(self._active_model)
-            if pipe and hasattr(pipe, 'to'):
+            if pipe and self._active_model not in self._cpu_offload_models and hasattr(pipe, 'to'):
                 try:
                     pipe.to('cpu')
                     logger.info(f"Unloaded model '{self._active_model}' to CPU")
@@ -134,6 +143,7 @@ class QwenImageService:
         self._dtype = None
         self._lora_loaded = False
         self._model_name = "qwen_image_2512"
+        self._cpu_offload_enabled = False
 
     async def generate(
         self,
@@ -256,7 +266,8 @@ class QwenImageService:
         else:
             pipe = pipeline_cls.from_pretrained(model_path, **load_kwargs)
 
-        if self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda"):
+        cpu_offload_enabled = self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda")
+        if cpu_offload_enabled:
             pipe.enable_model_cpu_offload()
         else:
             pipe.to(self._device)
@@ -267,9 +278,10 @@ class QwenImageService:
         self._apply_scheduler_config(pipe)
         self._pipe = pipe
         self._model_name = current_model
+        self._cpu_offload_enabled = cpu_offload_enabled
         
         # 注册到模型管理器
-        _model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch))
+        _model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled)
         _model_manager.activate_model(self._model_name)
         
         return pipe
@@ -296,13 +308,14 @@ class QwenImageService:
         """卸载当前pipeline"""
         if self._pipe is not None:
             try:
-                if hasattr(self._pipe, 'to'):
+                if not self._cpu_offload_enabled and hasattr(self._pipe, 'to'):
                     self._pipe.to('cpu')
                 logger.info(f"Unloaded pipeline to CPU: {self._model_name}")
             except Exception as e:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
             self._lora_loaded = False
+            self._cpu_offload_enabled = False
 
     def _load_lora(self, pipe) -> None:
         if self._lora_loaded or not self.settings.qwen_image_lora_path:
