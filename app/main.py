@@ -144,7 +144,10 @@ def _get_flux_service() -> Any:
 def _get_qwen_image_service() -> Any:
     from app.qwen_image_service import QwenImageService
 
-    global _qwen_image_service
+    global _qwen_image_service, _qwen_edit_service
+    if _qwen_edit_service is not None:
+        _qwen_edit_service.unload()
+        _qwen_edit_service = None
     if _qwen_image_service is None:
         _qwen_image_service = QwenImageService(settings)
     return _qwen_image_service
@@ -153,7 +156,10 @@ def _get_qwen_image_service() -> Any:
 def _get_qwen_edit_service() -> Any:
     from app.qwen_edit_service import QwenImageEditService
 
-    global _qwen_edit_service
+    global _qwen_edit_service, _qwen_image_service
+    if _qwen_image_service is not None:
+        _qwen_image_service.unload()
+        _qwen_image_service = None
     if _qwen_edit_service is None:
         _qwen_edit_service = QwenImageEditService(settings)
     return _qwen_edit_service

@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import inspect
 import logging
 import time
@@ -23,6 +24,7 @@ class QwenImageEditService:
         self._active_adapter = None
         self._model_name = "qwen_image_edit_2511"
         self._model_manager = _model_manager
+        self._cpu_offload_enabled = False
 
 
     async def edit(
@@ -145,6 +147,8 @@ class QwenImageEditService:
         if self._pipe is not None:
             return self._pipe
 
+        self._model_manager.unload_except(current_model)
+
         import diffusers
 
         pipeline_cls = getattr(diffusers, self.settings.qwen_edit_pipeline_class)
@@ -162,10 +166,12 @@ class QwenImageEditService:
             load_kwargs["device_map"] = self.settings.qwen_edit_device_map
 
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **load_kwargs)
+        cpu_offload_enabled = False
         if quantization_config is not None:
             pass
         elif self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda"):
             pipe.enable_model_cpu_offload()
+            cpu_offload_enabled = True
         else:
             pipe.to(self._device)
         if hasattr(pipe, "set_progress_bar_config"):
@@ -173,9 +179,10 @@ class QwenImageEditService:
 
         self._pipe = pipe
         self._model_name = current_model
+        self._cpu_offload_enabled = cpu_offload_enabled
         
         # 注册到模型管理器
-        self._model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch))
+        self._model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled)
         self._model_manager.activate_model(self._model_name)
         
         return pipe
@@ -249,10 +256,19 @@ class QwenImageEditService:
         """卸载当前pipeline"""
         if self._pipe is not None:
             try:
-                if hasattr(self._pipe, 'to'):
+                if not self._cpu_offload_enabled and hasattr(self._pipe, 'to'):
                     self._pipe.to('cpu')
-                logger.info(f"Unloaded pipeline to CPU: {self._model_name}")
+                    logger.info(f"Moved pipeline to CPU before release: {self._model_name}")
+                else:
+                    logger.info(f"Releasing pipeline: {self._model_name}")
             except Exception as e:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
             self._active_adapter = None
+            self._cpu_offload_enabled = False
+            self._model_manager.unregister_model(self._model_name)
+            self._model_manager._release_torch_memory()
+
+    def unload(self) -> None:
+        """主动释放当前服务持有的 pipeline。"""
+        self._unload_pipeline()

@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import inspect
 import logging
 import re
@@ -39,17 +40,27 @@ class ModelManager:
         """注销模型"""
         if name in self._models:
             pipe = self._models.pop(name)
-            # 卸载到CPU
             try:
                 if name not in self._cpu_offload_models and hasattr(pipe, 'to'):
                     pipe.to('cpu')
-                logger.info(f"Unloaded model '{name}' to CPU")
+                    logger.info(f"Moved model '{name}' to CPU before release")
+                else:
+                    logger.info(f"Releasing model '{name}'")
             except Exception as e:
                 logger.warning(f"Failed to unload model '{name}': {e}")
             del pipe
             self._model_sizes.pop(name, None)
             self._last_access.pop(name, None)
             self._cpu_offload_models.discard(name)
+            if self._active_model == name:
+                self._active_model = None
+            self._release_torch_memory()
+
+    def unload_except(self, keep_name: str) -> None:
+        """释放除 keep_name 以外的已注册模型引用。"""
+        for name in list(self._models.keys()):
+            if name != keep_name:
+                self.unregister_model(name)
     
     def activate_model(self, name: str) -> bool:
         """激活模型,如果需要则从CPU加载到GPU"""
@@ -98,9 +109,18 @@ class ModelManager:
         for name in list(self._models.keys()):
             self.unregister_model(name)
         self._active_model = None
-        import torch
-        torch.cuda.empty_cache()
+        self._release_torch_memory()
         logger.info("Cleared all models")
+
+    def _release_torch_memory(self) -> None:
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception as exc:
+            logger.debug("Failed to release torch cache: %s", exc)
     
     def get_model(self, name: str) -> Optional[any]:
         """获取模型"""
@@ -248,6 +268,8 @@ class QwenImageService:
         if self._pipe is not None:
             return self._pipe
 
+        _model_manager.unload_except(current_model)
+
         import diffusers
 
         pipeline_cls = getattr(diffusers, self.settings.qwen_image_pipeline_class)
@@ -310,12 +332,20 @@ class QwenImageService:
             try:
                 if not self._cpu_offload_enabled and hasattr(self._pipe, 'to'):
                     self._pipe.to('cpu')
-                logger.info(f"Unloaded pipeline to CPU: {self._model_name}")
+                    logger.info(f"Moved pipeline to CPU before release: {self._model_name}")
+                else:
+                    logger.info(f"Releasing pipeline: {self._model_name}")
             except Exception as e:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
             self._lora_loaded = False
             self._cpu_offload_enabled = False
+            _model_manager.unregister_model(self._model_name)
+            _model_manager._release_torch_memory()
+
+    def unload(self) -> None:
+        """主动释放当前服务持有的 pipeline。"""
+        self._unload_pipeline()
 
     def _load_lora(self, pipe) -> None:
         if self._lora_loaded or not self.settings.qwen_image_lora_path:
