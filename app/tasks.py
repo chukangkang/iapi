@@ -1,7 +1,12 @@
 import asyncio
 import logging
+import multiprocessing
+import os
+import signal
+import sys
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
@@ -14,6 +19,138 @@ from app.task_store import ImageTaskMetadataStore
 
 TaskStatus = str
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def suppress_output():
+    """临时抑制stdout/stderr,避免子进程输出干扰"""
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
+        yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+
+def _task_execution_worker(payload: dict, reference_image_b64: Optional[str]) -> dict:
+    """子进程执行函数,隔离OOM和崩溃"""
+    import traceback
+    
+    # 在子进程中重新设置信号处理器
+    def signal_handler(signum, frame):
+        sig_name = signal.Signals(signum).name
+        sys.stderr.write(f"Child process received {sig_name}\n")
+        sys.stderr.write(f"Stack: {''.join(traceback.format_stack(frame))}\n")
+        sys.stderr.flush()
+        os._exit(128 + signum)
+    
+    signal.signal(signal.SIGSEGV, signal_handler)
+    signal.signal(signal.SIGBUS, signal_handler)
+    signal.signal(signal.SIGFPE, signal_handler)
+    
+    try:
+        from app.main import _run_task_payload
+        from app.image_utils import string_to_image
+        
+        reference_image = string_to_image(reference_image_b64) if reference_image_b64 else None
+        result = _run_task_payload(payload, reference_image)
+        
+        # 将结果转换为可序列化格式
+        if isinstance(result, dict):
+            return {"success": True, "data": result}
+        else:
+            return {"success": True, "data": {"result": result}}
+    except MemoryError as e:
+        return {"success": False, "error": "MemoryError", "message": str(e), "is_oom": True}
+    except Exception as e:
+        return {"success": False, "error": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()}
+
+
+async def _run_task_in_subprocess(self, payload: dict, reference_image: Optional[Image.Image]) -> dict:
+    """在子进程中执行任务,隔离OOM和崩溃"""
+    import base64
+    from app.image_utils import image_to_base64_png
+    
+    reference_image_b64 = image_to_base64_png(reference_image) if reference_image else None
+    
+    loop = asyncio.get_event_loop()
+    
+    # 使用线程池运行子进程,避免阻塞事件循环
+    result = await loop.run_in_executor(
+        None,
+        _task_execution_worker,
+        payload,
+        reference_image_b64
+    )
+    
+    if not result["success"]:
+        if result.get("is_oom"):
+            raise MemoryError(result.get("message", "Out of memory"))
+        else:
+            error_msg = result.get("message", "Unknown error")
+            raise RuntimeError(error_msg)
+    
+    return result["data"]
+
+
+# 为ImageTaskManager添加方法引用
+ImageTaskManager._run_task_in_subprocess = _run_task_in_subprocess
+
+
+def check_gpu_memory() -> dict:
+    """检查GPU显存使用情况"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=memory.used,memory.total,utilization.gpu,power.draw,power.limit', '--format=csv,noheader,nounits'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split(',')
+            if len(parts) >= 2:
+                used_mb = float(parts[0].strip())
+                total_mb = float(parts[1].strip())
+                return {
+                    "used_mb": used_mb,
+                    "total_mb": total_mb,
+                    "used_percent": (used_mb / total_mb * 100) if total_mb > 0 else 0,
+                    "utilization": parts[2].strip() if len(parts) > 2 else "N/A",
+                    "power_draw": parts[3].strip() if len(parts) > 3 else "N/A",
+                    "power_limit": parts[4].strip() if len(parts) > 4 else "N/A"
+                }
+    except Exception as e:
+        logger.debug(f"Failed to check GPU memory: {e}")
+    return None
+
+
+def check_process_health() -> dict:
+    """检查进程健康状态"""
+    import psutil
+    
+    try:
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        
+        return {
+            "pid": os.getpid(),
+            "ppid": os.getppid(),
+            "status": process.status(),
+            "memory_rss_mb": memory_info.rss / (1024 * 1024),
+            "memory_vms_mb": memory_info.vms / (1024 * 1024),
+            "cpu_percent": process.cpu_percent(),
+            "num_threads": process.num_threads(),
+            "is_running": process.is_running(),
+            "is_zombie": process.status() == psutil.STATUS_ZOMBIE
+        }
+    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"Unknown: {e}"}
 
 
 @dataclass
@@ -34,6 +171,30 @@ class ImageTask:
 
 
 class ImageTaskManager:
+    def _log_task_health(self, worker_id: int, task_id: str, phase: str) -> None:
+        """记录任务执行期间的健康状态"""
+        try:
+            gpu_info = check_gpu_memory()
+            proc_info = check_process_health()
+            
+            if gpu_info:
+                logger.info(
+                    "Worker %s/%s task %s %s: GPU used=%.1f/%.1f MB (%.1f%%), util=%s",
+                    self.settings.resolved_worker_name, worker_id, task_id, phase,
+                    gpu_info["used_mb"], gpu_info["total_mb"], gpu_info["used_percent"],
+                    gpu_info["utilization"]
+                )
+            
+            if proc_info and "error" not in proc_info:
+                logger.debug(
+                    "Worker %s/%s task %s %s: PID=%d, RSS=%.1f MB, threads=%d, status=%s",
+                    self.settings.resolved_worker_name, worker_id, task_id, phase,
+                    proc_info["pid"], proc_info["memory_rss_mb"],
+                    proc_info["num_threads"], proc_info["status"]
+                )
+        except Exception as e:
+            logger.debug(f"Failed to log task health: {e}")
+
     def __init__(
         self,
         settings: Settings,
@@ -169,13 +330,38 @@ class ImageTaskManager:
         task.updated = task.started
         self.store.save(task)
         logger.info("Worker %s/%s started task %s", self.settings.resolved_worker_name, worker_id, task_id)
+        logger.info(f"Task details: id={task_id}, width={task.payload.get('width', 'N/A')}, height={task.payload.get('height', 'N/A')}, steps={task.payload.get('num_inference_steps', 'N/A')}")
+        
+        # 任务开始前检查
+        self._log_task_health(worker_id, task_id, "start")
+        
         heartbeat_task = asyncio.create_task(self._heartbeat_running_task(task))
         try:
-            task.result = await self.runner(task.payload, task.reference_image)
+            # 在子进程中执行任务,隔离OOM和崩溃
+            task.result = await self._run_task_in_subprocess(task.payload, task.reference_image)
             task.status = "succeeded"
             task.completed = int(time.time())
             task.reference_image = None
             logger.info("Worker %s/%s completed task %s", self.settings.resolved_worker_name, worker_id, task_id)
+            # 任务完成后检查
+            self._log_task_health(worker_id, task_id, "end")
+        except MemoryError as me:
+            task.status = "failed"
+            task.error = f"Out of memory (OOM): {me}"
+            task.completed = int(time.time())
+            task.reference_image = None
+            logger.critical(f"Worker {worker_id}/{self.settings.resolved_worker_name} OOM on task {task_id}")
+            logger.critical(f"Task payload: {task.payload}")
+            logger.critical(f"Worker PID: {os.getpid()}")
+            # 尝试获取GPU显存信息
+            try:
+                import subprocess
+                result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total,utilization.gpu', '--format=csv,noheader,nounits'], 
+                                      capture_output=True, text=True, timeout=5)
+                logger.critical(f"GPU memory info: {result.stdout.strip()}")
+            except Exception as gpu_error:
+                logger.critical(f"Failed to get GPU info: {gpu_error}")
+            raise  # 重新抛出以触发进程退出
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)

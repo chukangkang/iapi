@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,118 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
+class ModelManager:
+    """模型管理器,支持模型在CPU/GPU间动态切换"""
+    
+    def __init__(self):
+        self._models: dict[str, any] = {}
+        self._active_model: Optional[str] = None
+        self._model_sizes: dict[str, float] = {}  # MB
+        self._last_access: dict[str, float] = {}
+        
+    def register_model(self, name: str, pipe: any, size_mb: float) -> None:
+        """注册模型"""
+        self._models[name] = pipe
+        self._model_sizes[name] = size_mb
+        self._last_access[name] = time.time()
+        logger.info(f"Registered model '{name}': {size_mb:.1f} MB")
+    
+    def unregister_model(self, name: str) -> None:
+        """注销模型"""
+        if name in self._models:
+            pipe = self._models.pop(name)
+            # 卸载到CPU
+            try:
+                if hasattr(pipe, 'to'):
+                    pipe.to('cpu')
+                logger.info(f"Unloaded model '{name}' to CPU")
+            except Exception as e:
+                logger.warning(f"Failed to unload model '{name}': {e}")
+            del pipe
+            self._model_sizes.pop(name, None)
+            self._last_access.pop(name, None)
+    
+    def activate_model(self, name: str) -> bool:
+        """激活模型,如果需要则从CPU加载到GPU"""
+        if name not in self._models:
+            return False
+        
+        if self._active_model == name:
+            return True
+        
+        import torch
+        
+        # 卸载当前模型
+        if self._active_model and self._active_model != name:
+            self._unload_active_model()
+        
+        # 加载到GPU
+        pipe = self._models[name]
+        try:
+            if hasattr(pipe, 'to'):
+                pipe.to('cuda')
+            self._active_model = name
+            self._last_access[name] = time.time()
+            logger.info(f"Activated model '{name}' on GPU")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to activate model '{name}': {e}")
+            return False
+    
+    def _unload_active_model(self) -> None:
+        """卸载当前活跃模型"""
+        if self._active_model:
+            pipe = self._models.get(self._active_model)
+            if pipe and hasattr(pipe, 'to'):
+                try:
+                    pipe.to('cpu')
+                    logger.info(f"Unloaded model '{self._active_model}' to CPU")
+                except Exception as e:
+                    logger.warning(f"Failed to unload model '{self._active_model}': {e}")
+            self._active_model = None
+    
+    def clear_all(self) -> None:
+        """清除所有模型"""
+        for name in list(self._models.keys()):
+            self.unregister_model(name)
+        self._active_model = None
+        import torch
+        torch.cuda.empty_cache()
+        logger.info("Cleared all models")
+    
+    def get_model(self, name: str) -> Optional[any]:
+        """获取模型"""
+        return self._models.get(name)
+    
+    def get_active_model(self) -> Optional[str]:
+        """获取当前活跃模型名称"""
+        return self._active_model
+    
+    def get_memory_info(self) -> dict:
+        """获取内存信息"""
+        import torch
+        
+        info = {
+            "active_model": self._active_model,
+            "registered_models": list(self._models.keys()),
+            "model_sizes": self._model_sizes.copy()
+        }
+        
+        if torch.cuda.is_available():
+            info["cuda"] = {
+                "total_mb": torch.cuda.get_device_properties(0).total_memory / (1024 ** 2),
+                "allocated_mb": torch.cuda.memory_allocated(0) / (1024 ** 2),
+                "reserved_mb": torch.cuda.memory_reserved(0) / (1024 ** 2),
+                "free_mb": (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024 ** 2)
+            }
+        
+        return info
+
+
+# 全局模型管理器
+_model_manager = ModelManager()
+
+
 class QwenImageService:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -20,6 +133,7 @@ class QwenImageService:
         self._device = None
         self._dtype = None
         self._lora_loaded = False
+        self._model_name = "qwen_image_2512"
 
     async def generate(
         self,
@@ -113,10 +227,17 @@ class QwenImageService:
         )
 
     def _get_pipeline(self):
+        import torch
+        
+        # 检查是否需要切换模型
+        current_model = self._get_model_name()
+        if self._pipe is not None and self._model_name != current_model:
+            logger.info(f"Model switch detected: {self._model_name} -> {current_model}")
+            self._unload_pipeline()
+        
         if self._pipe is not None:
             return self._pipe
 
-        import torch
         import diffusers
 
         pipeline_cls = getattr(diffusers, self.settings.qwen_image_pipeline_class)
@@ -145,7 +266,43 @@ class QwenImageService:
         self._load_lora(pipe)
         self._apply_scheduler_config(pipe)
         self._pipe = pipe
+        self._model_name = current_model
+        
+        # 注册到模型管理器
+        _model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch))
+        _model_manager.activate_model(self._model_name)
+        
         return pipe
+    
+    def _get_model_name(self) -> str:
+        """获取当前模型名称"""
+        model_path = self.settings.qwen_image_model_path
+        if "qwen-image-2512" in model_path.lower():
+            return "qwen_image_2512"
+        elif "qwen-image-edit" in model_path.lower():
+            return "qwen_image_edit_2511"
+        else:
+            return f"custom_{hash(model_path) % 1000}"
+    
+    def _estimate_model_size(self, torch) -> float:
+        """估算模型大小 (MB)"""
+        # 4bit量化模型约3-4GB, FP16约14-16GB
+        if self.settings.torch_dtype == "bfloat16" or self.settings.torch_dtype == "float16":
+            return 15000  # ~15GB
+        else:
+            return 4000  # ~4GB (4bit量化)
+    
+    def _unload_pipeline(self) -> None:
+        """卸载当前pipeline"""
+        if self._pipe is not None:
+            try:
+                if hasattr(self._pipe, 'to'):
+                    self._pipe.to('cpu')
+                logger.info(f"Unloaded pipeline to CPU: {self._model_name}")
+            except Exception as e:
+                logger.warning(f"Failed to unload pipeline: {e}")
+            self._pipe = None
+            self._lora_loaded = False
 
     def _load_lora(self, pipe) -> None:
         if self._lora_loaded or not self.settings.qwen_image_lora_path:

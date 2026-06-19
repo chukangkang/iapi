@@ -1,11 +1,17 @@
 import asyncio
 import inspect
+import logging
+import time
 from pathlib import Path
 from typing import Optional
 
 from PIL import Image, ImageOps
 
 from app.config import Settings
+from app.qwen_image_service import ModelManager, _model_manager
+
+
+logger = logging.getLogger(__name__)
 
 
 class QwenImageEditService:
@@ -15,6 +21,9 @@ class QwenImageEditService:
         self._device = None
         self._dtype = None
         self._active_adapter = None
+        self._model_name = "qwen_image_edit_2511"
+        self._model_manager = _model_manager
+
 
     async def edit(
         self,
@@ -125,10 +134,17 @@ class QwenImageEditService:
         return ImageOps.pad(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, color=color, centering=(0.5, 0.5))
 
     def _get_pipeline(self):
+        import torch
+        
+        # 检查是否需要切换模型
+        current_model = self._get_model_name()
+        if self._pipe is not None and self._model_name != current_model:
+            logger.info(f"Model switch detected: {self._model_name} -> {current_model}")
+            self._unload_pipeline()
+        
         if self._pipe is not None:
             return self._pipe
 
-        import torch
         import diffusers
 
         pipeline_cls = getattr(diffusers, self.settings.qwen_edit_pipeline_class)
@@ -156,6 +172,12 @@ class QwenImageEditService:
             pipe.set_progress_bar_config(disable=True)
 
         self._pipe = pipe
+        self._model_name = current_model
+        
+        # 注册到模型管理器
+        self._model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch))
+        self._model_manager.activate_model(self._model_name)
+        
         return pipe
 
     def _quantization_config(self, diffusers):
@@ -204,3 +226,33 @@ class QwenImageEditService:
         if not self._device or self._device == "mps":
             return "cpu"
         return self._device
+
+    def _get_model_name(self) -> str:
+        """获取当前模型名称"""
+        model_path = self.settings.qwen_edit_model_path
+        if "qwen-image-edit-2511" in model_path.lower():
+            return "qwen_image_edit_2511"
+        elif "qwen-image-2512" in model_path.lower():
+            return "qwen_image_2512"
+        else:
+            return f"custom_edit_{hash(model_path) % 1000}"
+    
+    def _estimate_model_size(self, torch) -> float:
+        """估算模型大小 (MB)"""
+        # 4bit量化模型约3-4GB, FP16约14-16GB
+        if self.settings.torch_dtype == "bfloat16" or self.settings.torch_dtype == "float16":
+            return 15000  # ~15GB
+        else:
+            return 4000  # ~4GB (4bit量化)
+    
+    def _unload_pipeline(self) -> None:
+        """卸载当前pipeline"""
+        if self._pipe is not None:
+            try:
+                if hasattr(self._pipe, 'to'):
+                    self._pipe.to('cpu')
+                logger.info(f"Unloaded pipeline to CPU: {self._model_name}")
+            except Exception as e:
+                logger.warning(f"Failed to unload pipeline: {e}")
+            self._pipe = None
+            self._active_adapter = None
