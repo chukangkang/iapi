@@ -500,6 +500,8 @@ async def _run_image_request(
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
         qwen_prompt = _qwen_unblur_upscale_prompt(prompt, app_settings) if is_unblur_upscale else prompt
         metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
+        if not payload.enhance_mode and _is_qwen_image_model(payload.model, app_settings):
+            metadata["qwen_image_i2i_fallback"] = "qwen_edit"
         metadata["qwen_edit_strength"] = qwen_strength
         metadata["qwen_edit_prompt"] = qwen_prompt
         metadata["qwen_edit_width"] = generation_width
@@ -719,6 +721,8 @@ def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Setting
     if payload.enhance_mode:
         return payload.enhance_mode
     if _is_qwen_image_model(payload.model, app_settings):
+        if payload.image:
+            return "qwen_edit"
         return "qwen_image"
     return app_settings.default_enhance_mode
 
