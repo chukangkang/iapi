@@ -172,7 +172,9 @@ PIXEL_SHARPEN_PERCENT=140
 PIXEL_SHARPEN_THRESHOLD=3
 UPSCALE_FIT_MODE=cover
 UPSCALE_FILL_COLOR=black
-REALESRGAN_MODEL_PATH=
+# Required for enhance_mode=realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.
+# Set to the directory containing REALESRGAN_MODEL_NAME, or to a concrete .pth file.
+REALESRGAN_MODEL_PATH=/root/xinglin-data/chat/weights
 REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
 REALESRGAN_MAX_PASSES=2
 REALESRGAN_DENOISE_STRENGTH=0.35

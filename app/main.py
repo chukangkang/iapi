@@ -650,7 +650,8 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="image is required for Qwen Edit enhance modes.",
         )
-    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} and app_settings.service_role != "api":
+    realesrgan_enhance_modes = {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}
+    if payload.enhance_mode in realesrgan_enhance_modes and app_settings.service_role != "api":
         from app.upscale_service import realesrgan_available, realesrgan_import_error
 
         if not realesrgan_available():
@@ -658,10 +659,10 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Real-ESRGAN dependencies cannot be imported. Install/fix realesrgan and basicsr, or use enhance_mode=pixel. Import error: {realesrgan_import_error()}",
             )
-    if payload.enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} and not app_settings.realesrgan_model_path.strip():
+    if payload.enhance_mode in realesrgan_enhance_modes and app_settings.service_role != "api" and not app_settings.realesrgan_model_path.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="REALESRGAN_MODEL_PATH is required for enhance_mode=realesrgan or realesrgan_flux.",
+            detail="REALESRGAN_MODEL_PATH is required for Real-ESRGAN enhance modes: realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.",
         )
 
 
