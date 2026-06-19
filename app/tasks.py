@@ -326,7 +326,7 @@ class ImageTaskManager:
         task.updated = task.started
         self.store.save(task)
         logger.info("Worker %s/%s started task %s", self.settings.resolved_worker_name, worker_id, task_id)
-        logger.info(f"Task details: id={task_id}, width={task.payload.get('width', 'N/A')}, height={task.payload.get('height', 'N/A')}, steps={task.payload.get('num_inference_steps', 'N/A')}")
+        logger.info(f"Task details: id={task_id}, width={getattr(task.payload, 'width', 'N/A')}, height={getattr(task.payload, 'height', 'N/A')}, steps={getattr(task.payload, 'num_inference_steps', 'N/A')}")
         
         # 任务开始前检查
         self._log_task_health(worker_id, task_id, "start")
