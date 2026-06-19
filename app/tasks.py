@@ -39,18 +39,6 @@ def _task_execution_worker(payload: dict, reference_image_b64: Optional[str]) ->
     """子进程执行函数,隔离OOM和崩溃"""
     import traceback
     
-    # 在子进程中重新设置信号处理器
-    def signal_handler(signum, frame):
-        sig_name = signal.Signals(signum).name
-        sys.stderr.write(f"Child process received {sig_name}\n")
-        sys.stderr.write(f"Stack: {''.join(traceback.format_stack(frame))}\n")
-        sys.stderr.flush()
-        os._exit(128 + signum)
-    
-    signal.signal(signal.SIGSEGV, signal_handler)
-    signal.signal(signal.SIGBUS, signal_handler)
-    signal.signal(signal.SIGFPE, signal_handler)
-    
     try:
         from app.main import _run_task_payload
         from app.image_utils import string_to_image
