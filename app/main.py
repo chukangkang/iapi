@@ -189,7 +189,23 @@ async def _run_task_payload(payload: object, reference_image) -> ImageResponse:
     )
 
 
-_task_manager = ImageTaskManager(settings, _run_task_payload, ImageGenerationRequest.model_validate)
+async def _prepare_task_payload(payload: object, reference_image) -> None:
+    await _prepare_image_request(
+        payload=payload,
+        reference_image=reference_image,
+        app_settings=settings,
+    )
+
+
+def _task_affinity_key(payload: object, has_reference_image: bool) -> str:
+    return _image_request_affinity_key(
+        payload=payload,
+        has_reference_image=has_reference_image,
+        app_settings=settings,
+    )
+
+
+_task_manager = ImageTaskManager(settings, _run_task_payload, ImageGenerationRequest.model_validate, _prepare_task_payload, _task_affinity_key)
 
 
 @asynccontextmanager
@@ -607,6 +623,62 @@ async def _run_image_request(
     metadata["output_width"] = image.width
     metadata["output_height"] = image.height
     return _image_response(image, payload, metadata)
+
+
+async def _prepare_image_request(
+    *,
+    payload: ImageGenerationRequest,
+    reference_image,
+    app_settings: Settings,
+) -> None:
+    _validate_image_payload(payload, app_settings)
+    output_width, output_height = _resolve_dimensions(payload, app_settings)
+    enhance_mode = _resolve_enhance_mode(payload, app_settings)
+
+    if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+        is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
+        await _get_qwen_edit_service().prepare(
+            lora_path=app_settings.qwen_unblur_upscale_lora_path if is_unblur_upscale else None,
+            lora_weight_name=app_settings.qwen_unblur_upscale_lora_weight_name if is_unblur_upscale else None,
+        )
+        if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}:
+            await _get_upscale_service().prepare(method="realesrgan")
+        return
+
+    if enhance_mode == "qwen_image":
+        await _get_qwen_image_service().prepare()
+        return
+
+    if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
+        if enhance_mode in {"realesrgan", "realesrgan_flux"}:
+            await _get_upscale_service().prepare(method="realesrgan")
+        if enhance_mode == "realesrgan_flux":
+            await _get_flux_service().prepare()
+        return
+
+    await _get_flux_service().prepare()
+
+
+def _image_request_affinity_key(
+    *,
+    payload: ImageGenerationRequest,
+    has_reference_image: bool,
+    app_settings: Settings,
+) -> str:
+    enhance_mode = _resolve_enhance_mode(payload, app_settings)
+    if has_reference_image and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+        lora_key = "unblur" if enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"} else "base"
+        upscale_key = "realesrgan" if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} else "pixel"
+        return f"qwen_edit:{app_settings.qwen_edit_model_path}:{lora_key}:{upscale_key}"
+    if enhance_mode == "qwen_image":
+        return f"qwen_image:{app_settings.qwen_image_model_path}:{app_settings.qwen_image_lora_path}:{app_settings.qwen_image_lora_adapter_name}"
+    if has_reference_image and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
+        if enhance_mode == "realesrgan_flux":
+            return f"realesrgan_flux:{app_settings.realesrgan_model_path}:{app_settings.realesrgan_model_name}:{app_settings.model_path}"
+        if enhance_mode == "realesrgan":
+            return f"realesrgan:{app_settings.realesrgan_model_path}:{app_settings.realesrgan_model_name}"
+        return "pixel"
+    return f"flux:{app_settings.model_path}"
 
 
 def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[dict[str, Any]] = None) -> ImageResponse:

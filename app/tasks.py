@@ -138,10 +138,14 @@ class ImageTaskManager:
         settings: Settings,
         runner: Callable[[object, Optional[Image.Image]], Awaitable[object]],
         payload_factory: Optional[Callable[[dict], object]] = None,
+        prepare_runner: Optional[Callable[[object, Optional[Image.Image]], Awaitable[None]]] = None,
+        affinity_key_factory: Optional[Callable[[object, bool], str]] = None,
     ):
         self.settings = settings
         self.runner = runner
         self.payload_factory = payload_factory
+        self.prepare_runner = prepare_runner
+        self.affinity_key_factory = affinity_key_factory
         self.queue: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.image_queue_maxsize)
         self.tasks: dict[str, ImageTask] = {}
         self.store = ImageTaskMetadataStore(settings)
@@ -150,6 +154,7 @@ class ImageTaskManager:
         self._maintenance_tasks: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
         self._last_idle_log_at = 0.0
+        self._worker_affinity_keys: dict[int, str] = {}
 
     async def start(self) -> None:
         if self.settings.service_role == "api":
@@ -240,12 +245,17 @@ class ImageTaskManager:
         while True:
             task_id = None
             try:
-                task_id = await self._next_task_id()
+                task_id = await self._next_task_id(worker_id)
                 if task_id is None:
                     await self._log_idle_redis_queue_state(worker_id)
                     continue
                 logger.info("Worker %s picked task %s", worker_id, task_id)
+                task_affinity_key = await self._task_affinity_key(task_id)
+                if task_affinity_key:
+                    logger.info("Worker %s picked task %s affinity=%s", worker_id, task_id, task_affinity_key)
                 await self._run_task(worker_id, task_id)
+                if task_affinity_key:
+                    self._worker_affinity_keys[worker_id] = task_affinity_key
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -264,17 +274,31 @@ class ImageTaskManager:
         task.status = "running"
         task.worker_id = worker_id
         task.worker_name = self.settings.resolved_worker_name
-        task.started = int(time.time())
-        task.updated = task.started
+        task.updated = int(time.time())
         self.store.save(task)
-        logger.info("Worker %s/%s started task %s", self.settings.resolved_worker_name, worker_id, task_id)
+        logger.info("Worker %s/%s preparing task %s", self.settings.resolved_worker_name, worker_id, task_id)
         logger.info(f"Task details: id={task_id}, width={getattr(task.payload, 'width', 'N/A')}, height={getattr(task.payload, 'height', 'N/A')}, steps={getattr(task.payload, 'num_inference_steps', 'N/A')}")
-        
-        # 任务开始前检查
-        self._log_task_health(worker_id, task_id, "start")
         
         heartbeat_task = asyncio.create_task(self._heartbeat_running_task(task))
         try:
+            if self.prepare_runner is not None:
+                prepare_started_at = time.time()
+                await self.prepare_runner(task.payload, task.reference_image)
+                logger.info(
+                    "Worker %s/%s prepared task %s in %.2fs",
+                    self.settings.resolved_worker_name,
+                    worker_id,
+                    task_id,
+                    time.time() - prepare_started_at,
+                )
+
+            task.started = int(time.time())
+            task.updated = task.started
+            self.store.save(task)
+            logger.info("Worker %s/%s started task %s", self.settings.resolved_worker_name, worker_id, task_id)
+            # 只在模型准备完成、正式推理开始时记录 start，避免把切模型/加载模型时间计入实际生成耗时。
+            self._log_task_health(worker_id, task_id, "start")
+
             # 执行任务 payload。异常交由下方分支记录为失败任务。
             task.result = await self._run_task_in_subprocess(task.payload, task.reference_image)
             task.status = "succeeded"
@@ -340,16 +364,87 @@ class ImageTaskManager:
         finally:
             await redis.aclose()
 
-    async def _next_task_id(self) -> Optional[str]:
+    async def _next_task_id(self, worker_id: int) -> Optional[str]:
         if self.settings.task_queue_backend == "redis":
             if self.redis is None:
                 self.redis = self._redis_from_url()
+            affinity_task_id = await self._pop_redis_affinity_task(worker_id)
+            if affinity_task_id is not None:
+                return affinity_task_id
             return await self.redis.brpoplpush(
                 self.settings.redis_queue_name,
                 self.settings.redis_processing_queue_name,
                 timeout=self.settings.redis_block_timeout,
             )
+        affinity_task_id = await self._pop_memory_affinity_task(worker_id)
+        if affinity_task_id is not None:
+            return affinity_task_id
         return await self.queue.get()
+
+    async def _pop_memory_affinity_task(self, worker_id: int) -> Optional[str]:
+        target_affinity_key = self._worker_affinity_keys.get(worker_id)
+        if not target_affinity_key or self.queue.empty():
+            return None
+        try:
+            queued_task_ids = list(self.queue._queue)
+        except AttributeError:
+            return None
+        for task_id in queued_task_ids:
+            if await self._task_affinity_key(task_id) != target_affinity_key:
+                continue
+            async with self._lock:
+                try:
+                    self.queue._queue.remove(task_id)
+                except ValueError:
+                    return None
+            logger.info("Worker %s selected affinity task %s from memory queue affinity=%s", worker_id, task_id, target_affinity_key)
+            return task_id
+        return None
+
+    async def _pop_redis_affinity_task(self, worker_id: int) -> Optional[str]:
+        if self.redis is None:
+            return None
+        target_affinity_key = self._worker_affinity_keys.get(worker_id)
+        if not target_affinity_key:
+            return None
+        queue_size = await self.redis.llen(self.settings.redis_queue_name)
+        if queue_size <= 1:
+            return None
+        queued_task_ids = await self.redis.lrange(self.settings.redis_queue_name, 0, -1)
+        for task_id in reversed(queued_task_ids):
+            if await self._task_affinity_key(task_id) != target_affinity_key:
+                continue
+            removed = await self.redis.lrem(self.settings.redis_queue_name, 1, task_id)
+            if not removed:
+                return None
+            await self.redis.lpush(self.settings.redis_processing_queue_name, task_id)
+            logger.info("Worker %s selected affinity task %s from Redis queue affinity=%s", worker_id, task_id, target_affinity_key)
+            return task_id
+        return None
+
+    async def _task_affinity_key(self, task_id: str) -> Optional[str]:
+        if self.affinity_key_factory is None:
+            return None
+        if self.settings.task_queue_backend == "memory":
+            task = await self.get(task_id)
+            if task is not None:
+                return self._payload_affinity_key(task.payload, task.reference_image is not None)
+        task_metadata = self.store.get(task_id)
+        if task_metadata is None or task_metadata.get("payload") is None:
+            return None
+        payload = task_metadata["payload"]
+        if self.payload_factory is not None:
+            payload = self.payload_factory(payload)
+        return self._payload_affinity_key(payload, bool(task_metadata.get("reference_image")))
+
+    def _payload_affinity_key(self, payload: object, has_reference_image: bool) -> Optional[str]:
+        if self.affinity_key_factory is None:
+            return None
+        try:
+            return self.affinity_key_factory(payload, has_reference_image)
+        except Exception as exc:
+            logger.debug("Failed to resolve task affinity key: %s", exc)
+            return None
 
     async def _ack_task_id(self, task_id: str) -> None:
         if self.settings.task_queue_backend == "redis":

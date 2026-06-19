@@ -59,6 +59,13 @@ class QwenImageEditService:
             lora_scale=lora_scale,
         )
 
+    async def prepare(self, *, lora_path: Optional[str] = None, lora_weight_name: Optional[str] = None) -> None:
+        await asyncio.to_thread(self._prepare_sync, lora_path=lora_path, lora_weight_name=lora_weight_name)
+
+    def _prepare_sync(self, *, lora_path: Optional[str], lora_weight_name: Optional[str]) -> None:
+        pipe = self._get_pipeline()
+        self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name)
+
     def _edit_sync(
         self,
         *,

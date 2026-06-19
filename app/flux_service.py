@@ -38,6 +38,9 @@ class FluxImageService:
             strength=strength,
         )
 
+    async def prepare(self) -> None:
+        await asyncio.to_thread(self._get_pipeline)
+
     def _generate_sync(
         self,
         *,

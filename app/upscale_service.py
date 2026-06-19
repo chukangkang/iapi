@@ -36,6 +36,24 @@ class ImageUpscaleService:
             fit_mode=fit_mode,
         )
 
+    async def prepare(self, *, method: str) -> None:
+        await asyncio.to_thread(self._prepare_sync, method=method)
+
+    def _prepare_sync(self, *, method: str) -> None:
+        if method != "realesrgan":
+            return
+        model_path = self._resolve_realesrgan_model_path()
+        if model_path is None:
+            return
+
+        _patch_torchvision_functional_tensor()
+
+        from realesrgan import RealESRGANer
+        from basicsr.archs.rrdbnet_arch import RRDBNet
+        from basicsr.archs.srvgg_arch import SRVGGNetCompact
+
+        self._get_upsampler(RealESRGANer, RRDBNet, SRVGGNetCompact, model_path)
+
     def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str, fit_mode: str) -> Image.Image:
         image = image.convert("RGB")
         if method == "realesrgan":

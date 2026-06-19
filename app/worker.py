@@ -8,7 +8,7 @@ import traceback
 from contextlib import asynccontextmanager
 
 from app.config import get_settings
-from app.main import ImageGenerationRequest, _run_task_payload
+from app.main import ImageGenerationRequest, _prepare_task_payload, _run_task_payload, _task_affinity_key
 from app.tasks import ImageTaskManager
 
 
@@ -98,7 +98,7 @@ async def main() -> None:
     if settings.task_queue_backend != "redis":
         raise RuntimeError("Worker service requires TASK_QUEUE_BACKEND=redis.")
     
-    manager = ImageTaskManager(settings, _run_task_payload, ImageGenerationRequest.model_validate)
+    manager = ImageTaskManager(settings, _run_task_payload, ImageGenerationRequest.model_validate, _prepare_task_payload, _task_affinity_key)
     
     async with worker_lifespan(manager):
         await manager.start()
