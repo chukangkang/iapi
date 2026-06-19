@@ -195,6 +195,23 @@ REALESRGAN_TILE=512
 | `qwen_unblur_upscale` | 加载 `Qwen-Image-Edit-2511-Unblur-Upscale` LoRA 做去模糊/高清增强，再像素放大到目标尺寸 | 中高 |
 | `qwen_unblur_upscale_realesrgan` | Qwen Unblur/Upscale LoRA 修复后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
 
+`/v1/images/edits` 分流表：
+
+| `model` | `enhance_mode` | 实际链路 | 说明 |
+| --- | --- | --- | --- |
+| `qwen-image-2512` | 未传 | Qwen Image 2512 | 默认走 `qwen_image`，加载 `QWEN_IMAGE_MODEL_PATH` + Turbo LoRA，原图会作为 image input 传给 2512 pipeline |
+| `qwen-image-2512` | `qwen_image` | Qwen Image 2512 | 显式指定 2512 生图/编辑链路，适合希望 4K 编辑直接使用 2512 时使用 |
+| `qwen-image-2512` | `flux` | FLUX img2img | `enhance_mode` 优先级高于 `model`，因此会忽略 2512 默认链路，改走 FLUX 参考图重绘 |
+| `qwen-image-2512` | `pixel` | 像素放大/锐化 | 不进入扩散模型，适合最大化保持文字、LOGO 和布局 |
+| `qwen-image-2512` | `realesrgan` | Real-ESRGAN 超分 | 不进入 FLUX/Qwen 扩散模型，使用 Real-ESRGAN 输出目标尺寸 |
+| `qwen-image-2512` | `realesrgan_flux` | Real-ESRGAN → FLUX | 先 Real-ESRGAN 放大，再用 FLUX 低强度细节修复 |
+| `qwen-image-2512` | `qwen_edit` | Qwen Image Edit 2511 → 像素放大 | 走 `QWEN_EDIT_MODEL_PATH` 指定的 2511 编辑基座，不走 2512 |
+| `qwen-image-2512` | `qwen_edit_realesrgan` | Qwen Image Edit 2511 → Real-ESRGAN | 先 2511 编辑修复，再 Real-ESRGAN 输出目标尺寸 |
+| `qwen-image-2512` | `qwen_unblur_upscale` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → 像素放大 | 加载 `QWEN_UNBLUR_UPSCALE_LORA_PATH`，用于去模糊/高清增强 |
+| `qwen-image-2512` | `qwen_unblur_upscale_realesrgan` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → Real-ESRGAN | 先用 2511 + 去模糊 LoRA 修复，再 Real-ESRGAN 输出 4K；这是 `model=2512` 搭配该模式时的实际路径 |
+| `flux-image-backend` 或其他模型名 | 未传 | `.env` 的 `DEFAULT_ENHANCE_MODE` | 默认配置通常是 `flux`；后续新增模型也可以通过同一套 `enhance_mode` 复用处理链路 |
+| `flux-image-backend` 或其他模型名 | 任意合法 `enhance_mode` | 对应 `enhance_mode` 链路 | `enhance_mode` 独立于 `model`，只要显式传入就按该模式分流 |
+
 如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
 
 如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到目标 4K。
