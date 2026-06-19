@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     device: str = "auto"
     torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "bfloat16"
     num_inference_steps: int = Field(default=4, ge=1)
-    default_width: int = Field(default=768, ge=64)
-    default_height: int = Field(default=768, ge=64)
+    default_width: int = Field(default=1328, ge=64)
+    default_height: int = Field(default=1328, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
-    default_negative_prompt: str = "extra hands, extra fingers, malformed hands, bad hands, fused fingers, missing fingers, extra arms, deformed limbs, mutated body, bad anatomy, disfigured, distorted face, low quality"
+    default_negative_prompt: str = "low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, AI-generated look, chaotic composition, blurry text, distorted text"
     prompt_enhance_enabled: bool = True
     prompt_enhance_short_max_chars: int = Field(default=80, ge=1)
     prompt_enhance_suffix: str = "high quality, detailed, natural lighting, realistic, clean composition"

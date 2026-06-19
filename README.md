@@ -1,6 +1,6 @@
 # FLUX.2 Klein KV OpenAI Image API
 
-一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`，也支持通过 `model=qwen-image-2512` 默认切换到 Qwen Image 2512 + Turbo LoRA 生图与 4K 高清编辑；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
+一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`，也支持通过 `model=qwen-image-2512` 默认切换到 Qwen Image 2512 + Turbo LoRA 生图与编辑；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
 
 ## 接口
 
@@ -26,12 +26,10 @@
 | `prompt` | 提示词，必填 | - |
 | `negative_prompt` | 反向词；会与 `.env` 的 `DEFAULT_NEGATIVE_PROMPT` 去重合并，底层 pipeline 支持时生效 | `.env` 默认值 |
 | `image` | 可选参考图；存在时走 i2i/KV cache 流程 | `null` |
-| `size` | OpenAI 风格尺寸，如 `768x768`、`1024x1024` | `768x768` |
-| `aspect_ratio` | 主流比例预设：`16:9`、`4:3`、`1:1`、`9:16` | `null` |
-| `resolution` | 搭配 `aspect_ratio` 使用：`2k` 或 `4k` | `2k` |
-| `width` / `height` | 显式宽高，会覆盖 `size` 对应维度 | `.env` 默认值 |
+| `aspect_ratio` | generations 使用 Qwen Image 2512 标准比例；edits 可搭配 `resolution=2k/4k` 输出高清尺寸 | `1:1` |
+| `size` / `resolution` | generations 不推荐传；edits 可传 `size=3840x2160` 或 `aspect_ratio=16:9` + `resolution=4k` | `null` |
+| `width` / `height` | generations 不建议传；edits 未传 `aspect_ratio`/`resolution`/`size` 时可作为输出尺寸兜底 | `.env` 默认值 |
 | `num_inference_steps` | 推理步数 | `4` |
-| `seed` | 随机种子 | `null` |
 | `response_format` | `url` 或 `b64_json` | `url` |
 | `enhance_mode` | 高清/保真模式：`flux`、`qwen_image`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
 | `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
@@ -58,16 +56,19 @@
 
 ## 主流比例
 
-你可以继续用 OpenAI 风格的 `size="宽x高"`，也可以使用 `aspect_ratio` + `resolution` 请求主流尺寸：
+`/v1/images/generations` 默认使用 `aspect_ratio` 请求 Qwen Image 2512 标准尺寸。FLUX 和 Qwen 2512 的生图路径共用同一套固定输出尺寸，不再使用 `resolution=2k/4k`，也不再按 `MAX_GENERATION_PIXELS` 缩小后二次放大。
 
-| 场景 | `aspect_ratio` | `resolution=2k` | `resolution=4k` |
-| --- | --- | --- | --- |
-| 视频、海报、桌面图 | `16:9` | `2560x1440` | `3840x2160` |
-| 老照片、证件、老式图片 | `4:3` | `2048x1536` | `4096x3072` |
-| 方形图、头像、朋友圈 | `1:1` | `1440x1440` | `4096x4096` |
-| 手机竖图、短视频封面 | `9:16` | `1440x2560` | `2160x3840` |
+| 场景 | `aspect_ratio` | 输出尺寸 |
+| --- | --- | --- |
+| 方形图、头像、朋友圈 | `1:1` | `1328x1328` |
+| 视频、海报、桌面图 | `16:9` | `1664x928` |
+| 手机竖图、短视频封面 | `9:16` | `928x1664` |
+| 老照片、证件、老式图片 | `4:3` | `1472x1104` |
+| 竖版证件/海报 | `3:4` | `1104x1472` |
+| 横版摄影/封面 | `3:2` | `1584x1056` |
+| 竖版摄影/封面 | `2:3` | `1056x1584` |
 
-为了避免 4090 24G 在 2K/4K 直接推理时 OOM，`enhance_mode=flux` 会根据 `.env` 里的 `MAX_GENERATION_PIXELS` 先按比例生成安全尺寸，再放大到目标输出尺寸。默认 `786432` 约等于 `1024x768` 的像素预算。
+对 `/v1/images/generations` 来说，`size`、`resolution` 和请求里的 `seed` 不再是推荐调用参数；`seed` 未传时默认使用 `0`，生成尺寸由 `aspect_ratio` 唯一决定。`/v1/images/edits` 仍保留 `resolution=4k`、`size=3840x2160` 等高清超分输出能力。
 
 如果目标是视频高清、海报高清、字幕/商品图文字保真，建议不要用默认 FLUX 重绘，而是使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
 
@@ -136,7 +137,7 @@ Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动
 
 ```env
 DEFAULT_ENHANCE_MODE=flux
-DEFAULT_NEGATIVE_PROMPT=extra hands, extra fingers, malformed hands, bad hands, fused fingers, missing fingers, extra arms, deformed limbs, mutated body, bad anatomy, disfigured, distorted face, low quality
+DEFAULT_NEGATIVE_PROMPT=low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, AI-generated look, chaotic composition, blurry text, distorted text
 FLUX_REFINE_STRENGTH=0.08
 QWEN_IMAGE_MODEL_NAME=qwen-image-2512
 QWEN_IMAGE_MODEL_PATH=unsloth/Qwen-Image-2512-unsloth-bnb-4bit
@@ -188,7 +189,7 @@ REALESRGAN_TILE=512
 | `flux` | FLUX 文生图/图生图；图生图会按 `flux_refine_strength` 低强度参考原图重绘 | 可能改变文字 |
 | `qwen_image` | Qwen Image 2512 Diffusers 4-bit 生图/高清编辑，默认加载 Turbo LoRA 并使用 2 步推理 | 取决于提示词 |
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
-| `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖目标尺寸，再缩放到 4K，不进 FLUX | 高 |
+| `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖标准目标尺寸，再缩放到目标尺寸，不进 FLUX | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
 | `qwen_edit` | Python 直接加载 Qwen Image Edit 做高清编辑，再像素放大到目标尺寸 | 中 |
 | `qwen_edit_realesrgan` | Qwen Image Edit 高清编辑后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
@@ -200,7 +201,7 @@ REALESRGAN_TILE=512
 | `model` | `enhance_mode` | 实际链路 | 说明 |
 | --- | --- | --- | --- |
 | `qwen-image-2512` | 未传 | Qwen Image 2512 | 默认走 `qwen_image`，加载 `QWEN_IMAGE_MODEL_PATH` + Turbo LoRA，原图会作为 image input 传给 2512 pipeline |
-| `qwen-image-2512` | `qwen_image` | Qwen Image 2512 | 显式指定 2512 生图/编辑链路，适合希望 4K 编辑直接使用 2512 时使用 |
+| `qwen-image-2512` | `qwen_image` | Qwen Image 2512 | 显式指定 2512 生图/编辑链路，适合希望直接使用 2512 时使用 |
 | `qwen-image-2512` | `flux` | FLUX img2img | `enhance_mode` 优先级高于 `model`，因此会忽略 2512 默认链路，改走 FLUX 参考图重绘 |
 | `qwen-image-2512` | `pixel` | 像素放大/锐化 | 不进入扩散模型，适合最大化保持文字、LOGO 和布局 |
 | `qwen-image-2512` | `realesrgan` | Real-ESRGAN 超分 | 不进入 FLUX/Qwen 扩散模型，使用 Real-ESRGAN 输出目标尺寸 |
@@ -208,25 +209,25 @@ REALESRGAN_TILE=512
 | `qwen-image-2512` | `qwen_edit` | Qwen Image Edit 2511 → 像素放大 | 走 `QWEN_EDIT_MODEL_PATH` 指定的 2511 编辑基座，不走 2512 |
 | `qwen-image-2512` | `qwen_edit_realesrgan` | Qwen Image Edit 2511 → Real-ESRGAN | 先 2511 编辑修复，再 Real-ESRGAN 输出目标尺寸 |
 | `qwen-image-2512` | `qwen_unblur_upscale` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → 像素放大 | 加载 `QWEN_UNBLUR_UPSCALE_LORA_PATH`，用于去模糊/高清增强 |
-| `qwen-image-2512` | `qwen_unblur_upscale_realesrgan` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → Real-ESRGAN | 先用 2511 + 去模糊 LoRA 修复，再 Real-ESRGAN 输出 4K；这是 `model=2512` 搭配该模式时的实际路径 |
+| `qwen-image-2512` | `qwen_unblur_upscale_realesrgan` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → Real-ESRGAN | 先用 2511 + 去模糊 LoRA 修复，再 Real-ESRGAN 输出标准目标尺寸；这是 `model=2512` 搭配该模式时的实际路径 |
 | `flux-image-backend` 或其他模型名 | 未传 | `.env` 的 `DEFAULT_ENHANCE_MODE` | 默认配置通常是 `flux`；后续新增模型也可以通过同一套 `enhance_mode` 复用处理链路 |
 | `flux-image-backend` 或其他模型名 | 任意合法 `enhance_mode` | 对应 `enhance_mode` 链路 | `enhance_mode` 独立于 `model`，只要显式传入就按该模式分流 |
 
-如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到 4K；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真放大和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
+如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到标准目标尺寸；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真缩放和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
 
-如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清放大” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到目标 4K。
+如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 标准尺寸输出” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到 `aspect_ratio` 对应的标准目标尺寸。
 
 `QWEN_EDIT_TRUE_CFG_SCALE=4.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，更贴近 Qwen Image Edit 2511 / Plus pipeline 的推荐调用方式；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS` 建议从 `10` 起步，画质通常比 `4` 步稳定。
 
 `qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`。`QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT` 会自动拼到用户请求的 `prompt` 前面以触发 LoRA，不会覆盖用户提示词；如果请求提示词里已经包含触发词，则不会重复拼接。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
 
-截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH=2048`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。服务会先把参考图按最长边缩放到 2048，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到请求的 4K 尺寸。
+截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH=2048`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。服务会先把参考图按最长边缩放到 2048，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到 `aspect_ratio` 对应的标准尺寸。
 
 4090 24G 显存紧张时可开启 Qwen Edit 量化：`QWEN_EDIT_QUANTIZATION=8bit`。更省显存可试 `4bit`，但速度和画质可能波动；量化依赖 Linux 下的 `bitsandbytes` 和支持 `PipelineQuantizationConfig` 的新版 Diffusers，默认 `none` 不启用。量化加载时 `QWEN_EDIT_DEVICE_MAP` 可选 `balanced`、`cuda`、`cpu`，默认 `balanced`；`8bit + balanced` 会启用 CPU fp32 offload，牺牲速度换稳定加载。若使用已经量化好的 Diffusers 仓库，例如 `ovedrive/Qwen-Image-Edit-2511-4bit`，请保持 `QWEN_EDIT_QUANTIZATION=none`，并设置 `QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline`。
 
-`REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如 `396x234` 会先超分到足够覆盖 `3840x2160`，再缩放到目标 4K，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
+`REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如小图会先超分到足够覆盖目标标准尺寸，再缩放到最终尺寸，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
 
-`UPSCALE_FIT_MODE=cover` 会保持原图比例并居中裁剪到目标 4K，避免黑边，也避免强行拉伸导致字体变形。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。高清输出推荐保持 `cover`。
+`UPSCALE_FIT_MODE=cover` 会保持原图比例并居中裁剪到目标标准尺寸，避免黑边，也避免强行拉伸导致字体变形。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。高清输出推荐保持 `cover`。
 
 当前 `realesrgan` Python 推理包需要 `.pth` 权重，不能直接加载 Hugging Face/Qualcomm 目录里的 `model.safetensors`。推荐下载最新版通用小模型 `realesr-general-x4v3.pth`，文字/视频高清场景先用它；`realesr-general-wdn-x4v3.pth` 是强降噪搭配权重，可选下载到同一目录。
 
@@ -428,7 +429,7 @@ curl -N -X POST http://127.0.0.1:8000/v1/chat/completions ^
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"A cat holding a sign that says hello world\",\"size\":\"768x768\",\"num_inference_steps\":4,\"seed\":0}"
+  -d "{\"prompt\":\"A cat holding a sign that says hello world\",\"aspect_ratio\":\"1:1\",\"num_inference_steps\":4}"
 ```
 
 ### Qwen Image 2512 Turbo 文生图 JSON
@@ -436,7 +437,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"model\":\"qwen-image-2512\",\"prompt\":\"A cinematic Chinese ink painting of a dragon over mountains\",\"size\":\"1024x1024\",\"seed\":0}"
+  -d "{\"model\":\"qwen-image-2512\",\"prompt\":\"A cinematic Chinese ink painting of a dragon over mountains\",\"aspect_ratio\":\"1:1\"}"
 ```
 
 提交后会立即返回：
@@ -465,23 +466,23 @@ curl http://127.0.0.1:8000/v1/images/tasks/img-xxx
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"A cat dressed like a wizard\",\"image\":\"https://example.com/input.png\",\"size\":\"768x768\",\"seed\":0}"
+  -d "{\"prompt\":\"A cat dressed like a wizard\",\"image\":\"https://example.com/input.png\",\"aspect_ratio\":\"1:1\"}"
 ```
 
-### 16:9 2K 海报
+### 16:9 海报
 
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"A cinematic sci-fi city poster at sunset\",\"aspect_ratio\":\"16:9\",\"resolution\":\"2k\",\"seed\":0}"
+  -d "{\"prompt\":\"A cinematic sci-fi city poster at sunset\",\"aspect_ratio\":\"16:9\"}"
 ```
 
-### 9:16 4K 手机竖图
+### 9:16 手机竖图
 
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"A fantasy mobile wallpaper with glowing clouds\",\"aspect_ratio\":\"9:16\",\"resolution\":\"4k\",\"seed\":0}"
+  -d "{\"prompt\":\"A fantasy mobile wallpaper with glowing clouds\",\"aspect_ratio\":\"9:16\"}"
 ```
 
 ### 图片编辑 multipart
@@ -490,8 +491,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
 curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=A cat dressed like a wizard" ^
   -F "image=@input.png" ^
-  -F "size=768x768" ^
-  -F "seed=0"
+  -F "aspect_ratio=1:1"
 ```
 
 ### 图片编辑 JSON（图片 URL）
@@ -499,23 +499,23 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -H "Content-Type: application/json" ^
-  -d "{\"prompt\":\"Upscale to 4K, sharpen details, preserve original image\",\"image\":\"https://example.com/input.png\",\"aspect_ratio\":\"16:9\",\"resolution\":\"4k\",\"enhance_mode\":\"pixel\",\"seed\":0}"
+  -d "{\"prompt\":\"Sharpen details and preserve original image\",\"image\":\"https://example.com/input.png\",\"aspect_ratio\":\"16:9\",\"enhance_mode\":\"pixel\"}"
 ```
 
 不要黑边时传 `upscale_fit_mode=cover`，后端会保持比例并居中裁剪：
 
 ```json
 {
-  "prompt": "使模糊的图片修复高清，保持人物和文字一致 [enhance_mode=realesrgan aspect_ratio=16:9 resolution=4k upscale_fit_mode=cover]",
+  "prompt": "使模糊的图片修复高清，保持人物和文字一致 [enhance_mode=realesrgan aspect_ratio=16:9 upscale_fit_mode=cover]",
   "image": "https://example.com/input.png"
 }
 ```
 
-如果通过 New API 等 OpenAI 兼容网关转发，网关可能会过滤 `enhance_mode`、`aspect_ratio`、`resolution` 这类非标准字段。此时可把参数同时写进 `prompt`，后端会从 prompt 中兜底解析：
+如果通过 New API 等 OpenAI 兼容网关转发，网关可能会过滤 `enhance_mode`、`aspect_ratio` 这类非标准字段。此时可把参数同时写进 `prompt`，后端会从 prompt 中兜底解析：
 
 ```json
 {
-  "prompt": "Upscale to 4K, sharpen details, preserve original image [enhance_mode=pixel aspect_ratio=16:9 resolution=4k]",
+  "prompt": "Sharpen details, preserve original image [enhance_mode=pixel aspect_ratio=16:9]",
   "image": "https://example.com/input.png"
 }
 ```
@@ -532,8 +532,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "image=@input.png" ^
   -F "aspect_ratio=16:9" ^
   -F "resolution=4k" ^
-  -F "enhance_mode=pixel" ^
-  -F "seed=0"
+  -F "enhance_mode=pixel"
 ```
 
 如果要指定精确 4K 尺寸，也可以直接传 `size`：
@@ -543,8 +542,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "prompt=Upscale to 4K, sharpen details, preserve original image" ^
   -F "image=@input.png" ^
   -F "size=3840x2160" ^
-  -F "enhance_mode=pixel" ^
-  -F "seed=0"
+  -F "enhance_mode=pixel"
 ```
 
 Real-ESRGAN 权重已配置时可改为：
@@ -578,8 +576,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "aspect_ratio=16:9" ^
   -F "resolution=4k" ^
   -F "enhance_mode=flux" ^
-  -F "flux_refine_strength=0.08" ^
-  -F "seed=0"
+  -F "flux_refine_strength=0.08"
 ```
 
 如果希望 `/v1/images/edits` 在高清 4K 时直接使用 Qwen Image 2512 Diffusers 4-bit + Turbo LoRA，可以使用模型名默认路由，或显式传 `enhance_mode=qwen_image`：
@@ -592,8 +589,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "image=@input.png" ^
   -F "aspect_ratio=16:9" ^
   -F "resolution=4k" ^
-  -F "upscale_fit_mode=cover" ^
-  -F "seed=0"
+  -F "upscale_fit_mode=cover"
 ```
 
 `flux_refine_strength` 越低越接近原图，越高越清晰但越容易改内容。建议从 `0.05`–`0.12` 试起；如果文字变化明显，降低到 `0.03`–`0.06`。
@@ -608,8 +604,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "resolution=4k" ^
   -F "enhance_mode=qwen_edit_realesrgan" ^
   -F "qwen_edit_strength=0.7" ^
-  -F "upscale_fit_mode=cover" ^
-  -F "seed=0"
+  -F "upscale_fit_mode=cover"
 ```
 
 `qwen_edit_strength` 越高，编辑修复越明显，但越可能改变原图；建议先用 `0.5`–`0.7`，人物或文字变化明显时降低。
@@ -661,6 +656,6 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 - 默认 `DEVICE=auto`，优先 CUDA，其次 MPS，最后 CPU。
 - 默认 `TORCH_DTYPE=bfloat16`，如果硬件不支持可改成 `float16` 或 `float32`。
 - `TOKENIZERS_PARALLELISM=false` 用于关闭 tokenizer fork warning；这是提示不是错误。
-- 4090 24G 跑 `FLUX.2-klein-9b-kv` 会比较贴边，默认配置使用 `768x768`、`ENABLE_CPU_OFFLOAD=true` 和 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 来优先保证稳定出图。
-- 如果 `768x768` 稳定后再尝试调高 `MAX_GENERATION_PIXELS`；若仍 OOM，保持 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存。
+- 4090 24G 跑 `FLUX.2-klein-9b-kv` 会比较贴边，默认配置使用 Qwen Image 2512 标准 `1:1` 尺寸 `1328x1328`、`ENABLE_CPU_OFFLOAD=true` 和 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 来优先保证稳定出图。
+- 如果标准尺寸仍 OOM，保持 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存；不建议再通过 `resolution` 或 `size` 扩大输出尺寸。
 - 配置 OSS 后优先返回 OSS URL；未配置 OSS 时，`PUBLIC_BASE_URL` 为空会返回本地相对路径，部署到公网时建议设置为服务外部访问地址。

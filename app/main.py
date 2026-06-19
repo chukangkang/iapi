@@ -20,6 +20,16 @@ from app.tasks import ImageTask, ImageTaskManager
 
 
 SIZE_PRESETS = {
+    "1:1": (1328, 1328),
+    "16:9": (1664, 928),
+    "9:16": (928, 1664),
+    "4:3": (1472, 1104),
+    "3:4": (1104, 1472),
+    "3:2": (1584, 1056),
+    "2:3": (1056, 1584),
+}
+
+EDIT_SIZE_PRESETS = {
     ("16:9", "2k"): (2560, 1440),
     ("16:9", "4k"): (3840, 2160),
     ("4:3", "2k"): (2048, 1536),
@@ -37,6 +47,7 @@ ETHNICITY_PROMPT_PATTERN = re.compile(r"中国|华人|亚洲|东亚|欧美|美�
 
 
 class ImageGenerationRequest(BaseModel):
+    endpoint: str = "generations"
     model: Optional[str] = None
     task_id: Optional[str] = None
     prompt: Optional[str] = None
@@ -49,7 +60,7 @@ class ImageGenerationRequest(BaseModel):
     width: Optional[int] = Field(default=None, ge=64)
     height: Optional[int] = Field(default=None, ge=64)
     num_inference_steps: Optional[int] = Field(default=None, ge=1)
-    seed: Optional[int] = None
+    seed: Optional[int] = 0
     response_format: str = "url"
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
@@ -282,6 +293,7 @@ def _chat_completion_stream(model_name: str, created: str, content: str):
 @app.post("/v1/images/generations/")
 async def create_image_generation(request: Request, app_settings: Settings = Depends(get_settings)):
     payload, reference_image = await _parse_image_request(request)
+    payload.endpoint = "generations"
     query_task_id = payload.task_id or _task_id_from_prompt(payload.prompt)
     if query_task_id:
         return await _get_image_task_response(query_task_id)
@@ -292,6 +304,7 @@ async def create_image_generation(request: Request, app_settings: Settings = Dep
 @app.post("/v1/images/edits/", response_model=ImageTaskResponse)
 async def create_image_edit(request: Request, app_settings: Settings = Depends(get_settings)) -> ImageTaskResponse:
     payload, reference_image = await _parse_image_request(request)
+    payload.endpoint = "edits"
     if reference_image is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image is required")
     return await _submit_image_task(payload, reference_image, app_settings)
@@ -421,7 +434,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             width=_optional_int(form.get("width")),
             height=_optional_int(form.get("height")),
             num_inference_steps=_optional_int(form.get("num_inference_steps")),
-            seed=_optional_int(form.get("seed")),
+            seed=_optional_int(form.get("seed")) or 0,
             response_format=_optional_str(form.get("response_format")) or "url",
             enhance_mode=_optional_str(form.get("enhance_mode")),
             upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
@@ -628,16 +641,30 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
 
 
 def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:
+    if payload.endpoint == "edits":
+        return _resolve_edit_dimensions(payload, app_settings)
+
+    aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio or "1:1")
+    if aspect_ratio not in SIZE_PRESETS:
+        supported = ", ".join(SIZE_PRESETS)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported aspect_ratio. Supported: {supported}",
+        )
+    return SIZE_PRESETS[aspect_ratio]
+
+
+def _resolve_edit_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:
     if payload.aspect_ratio or payload.resolution:
         aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio or "1:1")
         resolution = (payload.resolution or "2k").lower()
-        if (aspect_ratio, resolution) not in SIZE_PRESETS:
-            supported = ", ".join(f"{ratio}/{res}" for ratio, res in SIZE_PRESETS)
+        if (aspect_ratio, resolution) not in EDIT_SIZE_PRESETS:
+            supported = ", ".join(f"{ratio}/{res}" for ratio, res in EDIT_SIZE_PRESETS)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported aspect_ratio/resolution. Supported: {supported}",
+                detail=f"Unsupported aspect_ratio/resolution for edits. Supported: {supported}",
             )
-        return SIZE_PRESETS[(aspect_ratio, resolution)]
+        return EDIT_SIZE_PRESETS[(aspect_ratio, resolution)]
 
     width = payload.width
     height = payload.height
@@ -652,14 +679,7 @@ def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings)
 
 
 def _resolve_generation_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:
-    output_pixels = output_width * output_height
-    if output_pixels <= app_settings.max_generation_pixels:
-        return _multiple_of_16(output_width), _multiple_of_16(output_height)
-
-    scale = (app_settings.max_generation_pixels / output_pixels) ** 0.5
-    width = max(64, _multiple_of_16(output_width * scale))
-    height = max(64, _multiple_of_16(output_height * scale))
-    return width, height
+    return output_width, output_height
 
 
 def _resolve_qwen_edit_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:
