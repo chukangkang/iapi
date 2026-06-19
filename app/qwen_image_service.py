@@ -1,11 +1,16 @@
 import asyncio
 import inspect
+import logging
+import re
 from pathlib import Path
 from typing import Optional
 
 from PIL import Image, ImageOps
 
 from app.config import Settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class QwenImageService:
@@ -75,6 +80,17 @@ class QwenImageService:
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
 
+        logger.info(
+            "Qwen Image generation: size=%sx%s steps=%s seed=%s guidance_scale=%s true_cfg_scale=%s lora_loaded=%s",
+            width,
+            height,
+            num_inference_steps,
+            seed,
+            kwargs.get("guidance_scale"),
+            kwargs.get("true_cfg_scale"),
+            self._lora_loaded,
+        )
+
         with torch.inference_mode():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
@@ -127,21 +143,59 @@ class QwenImageService:
             pipe.set_progress_bar_config(disable=True)
 
         self._load_lora(pipe)
+        self._apply_scheduler_config(pipe)
         self._pipe = pipe
         return pipe
 
     def _load_lora(self, pipe) -> None:
         if self._lora_loaded or not self.settings.qwen_image_lora_path:
             return
-        kwargs = {"adapter_name": self.settings.qwen_image_lora_adapter_name}
-        if self.settings.qwen_image_lora_weight_name:
-            kwargs["weight_name"] = self.settings.qwen_image_lora_weight_name
+        configured_adapter_name = self.settings.qwen_image_lora_adapter_name
+        adapter_name = self._safe_adapter_name(configured_adapter_name)
+        kwargs = {"adapter_name": adapter_name}
+        weight_name = self.settings.qwen_image_lora_weight_name or self._weight_name_from_adapter_name(configured_adapter_name)
+        if weight_name:
+            kwargs["weight_name"] = weight_name
         pipe.load_lora_weights(self.settings.qwen_image_lora_path, **kwargs)
         if hasattr(pipe, "set_adapters"):
-            pipe.set_adapters([self.settings.qwen_image_lora_adapter_name], adapter_weights=[self.settings.qwen_image_lora_scale])
+            pipe.set_adapters([adapter_name], adapter_weights=[self.settings.qwen_image_lora_scale])
         elif hasattr(pipe, "fuse_lora"):
             pipe.fuse_lora(lora_scale=self.settings.qwen_image_lora_scale)
         self._lora_loaded = True
+        logger.info(
+            "Loaded Qwen Image LoRA: path=%s weight_name=%s adapter_name=%s scale=%s",
+            self.settings.qwen_image_lora_path,
+            weight_name or "<auto>",
+            adapter_name,
+            self.settings.qwen_image_lora_scale,
+        )
+
+    def _apply_scheduler_config(self, pipe) -> None:
+        scheduler = getattr(pipe, "scheduler", None)
+        if scheduler is None:
+            return
+        scheduler_config = {
+            "exponential_shift_mu": self.settings.qwen_image_scheduler_exponential_shift_mu,
+            "use_dynamic_shifting": self.settings.qwen_image_scheduler_use_dynamic_shifting,
+            "shift_terminal": self.settings.qwen_image_scheduler_shift_terminal,
+        }
+        if hasattr(scheduler, "from_config"):
+            pipe.scheduler = scheduler.__class__.from_config(scheduler.config, **scheduler_config)
+        else:
+            for key, value in scheduler_config.items():
+                setattr(scheduler, key, value)
+        logger.info("Applied Qwen Image scheduler config: %s", scheduler_config)
+
+    def _safe_adapter_name(self, adapter_name: str) -> str:
+        value = (adapter_name or "qwen_image_2512_turbo").strip()
+        value = Path(value).stem if Path(value).suffix else value
+        value = re.sub(r"[^0-9A-Za-z_]", "_", value)
+        value = re.sub(r"_+", "_", value).strip("_")
+        return value or "qwen_image_2512_turbo"
+
+    def _weight_name_from_adapter_name(self, adapter_name: str) -> str:
+        value = (adapter_name or "").strip()
+        return Path(value).name if Path(value).suffix.lower() == ".safetensors" else ""
 
     def _looks_like_single_file(self, model_path: str) -> bool:
         suffix = Path(model_path).suffix.lower()

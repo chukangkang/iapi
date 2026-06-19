@@ -547,12 +547,20 @@ async def _run_image_request(
     if enhance_mode == "qwen_image":
         metadata["qwen_image_model_path"] = app_settings.qwen_image_model_path
         metadata["qwen_image_lora_path"] = app_settings.qwen_image_lora_path
-        metadata["qwen_image_lora_weight_name"] = app_settings.qwen_image_lora_weight_name
+        qwen_image_service = _get_qwen_image_service()
+        metadata["qwen_image_lora_weight_name"] = app_settings.qwen_image_lora_weight_name or qwen_image_service._weight_name_from_adapter_name(app_settings.qwen_image_lora_adapter_name)
+        metadata["qwen_image_lora_adapter_name"] = qwen_image_service._safe_adapter_name(app_settings.qwen_image_lora_adapter_name)
         metadata["qwen_image_lora_scale"] = app_settings.qwen_image_lora_scale
+        metadata["qwen_image_steps"] = payload.num_inference_steps or app_settings.qwen_image_steps
+        metadata["qwen_image_guidance_scale"] = app_settings.qwen_image_guidance_scale
+        metadata["qwen_image_true_cfg_scale"] = app_settings.qwen_image_true_cfg_scale
+        metadata["qwen_image_scheduler_exponential_shift_mu"] = app_settings.qwen_image_scheduler_exponential_shift_mu
+        metadata["qwen_image_scheduler_use_dynamic_shifting"] = app_settings.qwen_image_scheduler_use_dynamic_shifting
+        metadata["qwen_image_scheduler_shift_terminal"] = app_settings.qwen_image_scheduler_shift_terminal
         metadata["qwen_image_task_type"] = "image_to_image" if reference_image is not None else "text_to_image"
         metadata["qwen_image_width"] = generation_width
         metadata["qwen_image_height"] = generation_height
-        image = await _get_qwen_image_service().generate(
+        image = await qwen_image_service.generate(
             prompt=prompt,
             negative_prompt=negative_prompt,
             image=reference_image,

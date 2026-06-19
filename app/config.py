@@ -1,4 +1,5 @@
 from functools import lru_cache
+import math
 import os
 from pathlib import Path
 import socket
@@ -43,6 +44,9 @@ class Settings(BaseSettings):
     qwen_image_steps: int = Field(default=2, ge=1)
     qwen_image_guidance_scale: float = Field(default=1.0, ge=0.0)
     qwen_image_true_cfg_scale: float = Field(default=1.0, ge=0.0)
+    qwen_image_scheduler_exponential_shift_mu: float = Field(default=math.log(2.5), ge=0.0)
+    qwen_image_scheduler_use_dynamic_shifting: bool = True
+    qwen_image_scheduler_shift_terminal: float = Field(default=0.7155, ge=0.0)
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
     qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
     qwen_edit_steps: int = Field(default=10, ge=1)
