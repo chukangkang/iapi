@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from app.config import Settings, get_settings
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
@@ -72,7 +72,14 @@ class ImageData(BaseModel):
     url: Optional[str] = None
     b64_json: Optional[str] = None
     revised_prompt: Optional[str] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: Optional[dict[str, Any]] = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+        if data.get("metadata") is None:
+            data.pop("metadata", None)
+        return data
 
 
 class ImageResponse(BaseModel):
@@ -595,7 +602,9 @@ async def _run_image_request(
 
 
 def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[dict[str, Any]] = None) -> ImageResponse:
-    data = ImageData(revised_prompt=payload.prompt, metadata=metadata or {})
+    data = ImageData(revised_prompt=payload.prompt)
+    if settings.response_metadata_enabled:
+        data.metadata = metadata or {}
     if payload.response_format == "b64_json":
         data.b64_json = image_to_base64_png(image)
     else:

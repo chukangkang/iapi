@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     default_width: int = Field(default=1328, ge=64)
     default_height: int = Field(default=1328, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
-    default_negative_prompt: str = "low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, AI-generated look, chaotic composition, blurry text, distorted text"
+    response_metadata_enabled: bool = True
+    default_negative_prompt: str = "low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, smooth skin, plastic look, blurry, oil painting look, AI-generated look, chaotic composition, blurry text, distorted text"
     prompt_enhance_enabled: bool = True
     prompt_enhance_short_max_chars: int = Field(default=80, ge=1)
     prompt_enhance_suffix: str = "high quality, detailed, natural lighting, realistic, clean composition"

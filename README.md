@@ -137,7 +137,8 @@ Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动
 
 ```env
 DEFAULT_ENHANCE_MODE=flux
-DEFAULT_NEGATIVE_PROMPT=low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, AI-generated look, chaotic composition, blurry text, distorted text
+RESPONSE_METADATA_ENABLED=true
+DEFAULT_NEGATIVE_PROMPT=low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, smooth skin, plastic look, blurry, oil painting look, AI-generated look, chaotic composition, blurry text, distorted text
 FLUX_REFINE_STRENGTH=0.08
 QWEN_IMAGE_MODEL_NAME=qwen-image-2512
 QWEN_IMAGE_MODEL_PATH=unsloth/Qwen-Image-2512-unsloth-bnb-4bit
@@ -179,6 +180,8 @@ REALESRGAN_TILE=512
 ```
 
 `DEFAULT_NEGATIVE_PROMPT` 是全局默认反向词。当前端不传 `negative_prompt` 时会直接使用该配置；当前端传入时，服务会按英文逗号、中文逗号、分号和换行拆分后去重合并，避免重复堆叠相同反向词。
+
+`RESPONSE_METADATA_ENABLED=true` 会在图片响应中返回调试用 `metadata`；生产线上可设为 `false`，响应将不包含 `metadata` 字段。
 
 `enhance_mode` 是独立的处理链路选择参数，显式传入时优先级高于 `model`。`qwen_image` 可通过两种方式启用：请求里传 `model=qwen-image-2512` 且不传 `enhance_mode`，或显式传 `enhance_mode=qwen_image`。前者适合 New API / OpenAI 兼容网关按模型名设置默认链路；后者适合直接调用本服务并明确指定处理模式。也就是说，`model=qwen-image-2512` + `enhance_mode=qwen_unblur_upscale_realesrgan` 会走 Qwen Image Edit 2511 + Unblur/Upscale LoRA + Real-ESRGAN 链路，而不是强制走 2512。`/v1/images/generations` 不传 `image` 时走文生图，`/v1/images/edits` 或 generations 传 `image` 时会把原图传给当前选定链路。`QWEN_IMAGE_MODEL_PATH` 默认使用 Unsloth 官方 Diffusers 4-bit 仓库 `unsloth/Qwen-Image-2512-unsloth-bnb-4bit`；如果要用 `unsloth/Qwen-Image-2512-GGUF`，需要改接 ComfyUI-GGUF 或 stable-diffusion.cpp 后端，不能直接用当前 Diffusers 服务加载单个 `.gguf` 文件。`QWEN_IMAGE_LORA_PATH` 默认使用 `Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps`，`QWEN_IMAGE_STEPS=2` 对应该 Turbo LoRA 推荐的低步数生图。
 
