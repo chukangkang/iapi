@@ -4,6 +4,7 @@ import uuid
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -107,6 +108,7 @@ settings = get_settings()
 settings.output_dir.mkdir(parents=True, exist_ok=True)
 
 _service: Optional[Any] = None
+_qwen_image_service: Optional[Any] = None
 _qwen_edit_service: Optional[Any] = None
 _upscale_service: Optional[Any] = None
 _storage: Optional[ImageStorage] = None
@@ -119,6 +121,15 @@ def _get_flux_service() -> Any:
     if _service is None:
         _service = FluxImageService(settings)
     return _service
+
+
+def _get_qwen_image_service() -> Any:
+    from app.qwen_image_service import QwenImageService
+
+    global _qwen_image_service
+    if _qwen_image_service is None:
+        _qwen_image_service = QwenImageService(settings)
+    return _qwen_image_service
 
 
 def _get_qwen_edit_service() -> Any:
@@ -193,15 +204,19 @@ def health() -> dict[str, str]:
 @app.get("/v1/models")
 def list_models(app_settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     created = _format_time(int(time.time()))
+    model_ids = [app_settings.model_name]
+    if app_settings.qwen_image_model_name not in model_ids:
+        model_ids.append(app_settings.qwen_image_model_name)
     return {
         "object": "list",
         "data": [
             {
-                "id": app_settings.model_name,
+                "id": model_id,
                 "object": "model",
                 "created": created,
                 "owned_by": "iapi",
             }
+            for model_id in model_ids
         ],
     }
 
@@ -516,6 +531,30 @@ async def _run_image_request(
         reference_image = image
 
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
+    if enhance_mode == "qwen_image":
+        metadata["qwen_image_model_path"] = app_settings.qwen_image_model_path
+        metadata["qwen_image_lora_path"] = app_settings.qwen_image_lora_path
+        metadata["qwen_image_lora_weight_name"] = app_settings.qwen_image_lora_weight_name
+        metadata["qwen_image_lora_scale"] = app_settings.qwen_image_lora_scale
+        metadata["qwen_image_task_type"] = "image_to_image" if reference_image is not None else "text_to_image"
+        metadata["qwen_image_width"] = generation_width
+        metadata["qwen_image_height"] = generation_height
+        image = await _get_qwen_image_service().generate(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            image=reference_image,
+            width=generation_width,
+            height=generation_height,
+            num_inference_steps=payload.num_inference_steps or app_settings.qwen_image_steps,
+            seed=payload.seed,
+        )
+        if image.size != (output_width, output_height):
+            image = image.resize((output_width, output_height))
+
+        metadata["output_width"] = image.width
+        metadata["output_height"] = image.height
+        return _image_response(image, payload, metadata)
+
     image = await _get_flux_service().generate(
         prompt=prompt,
         negative_prompt=negative_prompt,
@@ -558,10 +597,10 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if payload.response_format not in {"url", "b64_json"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
-    if payload.enhance_mode and payload.enhance_mode not in {"flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+    if payload.enhance_mode and payload.enhance_mode not in {"flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="enhance_mode must be one of: flux, pixel, realesrgan, realesrgan_flux, qwen_edit, qwen_edit_realesrgan, qwen_unblur_upscale, qwen_unblur_upscale_realesrgan",
+            detail="enhance_mode must be one of: flux, qwen_image, pixel, realesrgan, realesrgan_flux, qwen_edit, qwen_edit_realesrgan, qwen_unblur_upscale, qwen_unblur_upscale_realesrgan",
         )
     if payload.upscale_fit_mode and payload.upscale_fit_mode not in {"stretch", "contain", "cover"}:
         raise HTTPException(
@@ -640,7 +679,23 @@ def _round_to_multiple(value: float, multiple: int) -> int:
 
 
 def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:
-    return payload.enhance_mode or app_settings.default_enhance_mode
+    if payload.enhance_mode:
+        return payload.enhance_mode
+    if _is_qwen_image_model(payload.model, app_settings):
+        return "qwen_image"
+    return app_settings.default_enhance_mode
+
+
+def _is_qwen_image_model(model: Optional[str], app_settings: Settings) -> bool:
+    if not model:
+        return False
+    requested_model = model.strip().casefold()
+    return requested_model in {
+        app_settings.qwen_image_model_name.casefold(),
+        Path(app_settings.qwen_image_model_path).name.casefold(),
+        "qwen-image-2512",
+        "qwen_image_2512",
+    }
 
 
 def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Settings) -> str:

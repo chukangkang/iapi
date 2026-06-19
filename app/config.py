@@ -31,8 +31,18 @@ class Settings(BaseSettings):
     prompt_enhance_short_max_chars: int = Field(default=80, ge=1)
     prompt_enhance_suffix: str = "high quality, detailed, natural lighting, realistic, clean composition"
     prompt_enhance_person_suffix: str = "Chinese person, East Asian facial features, contemporary Chinese style"
-    default_enhance_mode: Literal["flux", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
+    default_enhance_mode: Literal["flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
+    qwen_image_model_name: str = "qwen-image-2512"
+    qwen_image_model_path: str = "unsloth/Qwen-Image-2512-unsloth-bnb-4bit"
+    qwen_image_pipeline_class: str = "QwenImagePipeline"
+    qwen_image_lora_path: str = "Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps"
+    qwen_image_lora_weight_name: str = ""
+    qwen_image_lora_adapter_name: str = "qwen_image_2512_turbo"
+    qwen_image_lora_scale: float = Field(default=1.0, ge=0.0)
+    qwen_image_steps: int = Field(default=2, ge=1)
+    qwen_image_guidance_scale: float = Field(default=1.0, ge=0.0)
+    qwen_image_true_cfg_scale: float = Field(default=1.0, ge=0.0)
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
     qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
     qwen_edit_steps: int = Field(default=10, ge=1)

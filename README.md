@@ -1,6 +1,6 @@
 # FLUX.2 Klein KV OpenAI Image API
 
-一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`。
+一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`，也支持通过 `model=qwen-image-2512` 默认切换到 Qwen Image 2512 + Turbo LoRA 生图与 4K 高清编辑；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
 
 ## 接口
 
@@ -33,7 +33,7 @@
 | `num_inference_steps` | 推理步数 | `4` |
 | `seed` | 随机种子 | `null` |
 | `response_format` | `url` 或 `b64_json` | `url` |
-| `enhance_mode` | 高清/保真模式：`flux`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
+| `enhance_mode` | 高清/保真模式：`flux`、`qwen_image`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
 | `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
 | `n` | 当前仅支持 `1` | `1` |
 
@@ -54,7 +54,7 @@
 
 ### `GET /v1/models`
 
-用于兼容 New API / OpenAI 模型列表探测，返回 `.env` 中配置的 `MODEL_NAME`。
+用于兼容 New API / OpenAI 模型列表探测，返回 `.env` 中配置的 `MODEL_NAME` 和 `QWEN_IMAGE_MODEL_NAME`。
 
 ## 主流比例
 
@@ -120,6 +120,8 @@ TOKENIZERS_PARALLELISM=false
 | 用途 | 配置项 | 默认值 / 文件名 | 下载地址 | 是否必需 |
 | --- | --- | --- | --- | --- |
 | FLUX 文生图/图生图基座 | `MODEL_PATH` | `black-forest-labs/FLUX.2-klein-9b-kv` | https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv | 使用 `flux` / 默认生成时必需 |
+| Qwen Image 2512 文生图基座 | `QWEN_IMAGE_MODEL_PATH` | `unsloth/Qwen-Image-2512-unsloth-bnb-4bit` | https://huggingface.co/unsloth/Qwen-Image-2512-unsloth-bnb-4bit | 使用 `qwen_image` 或 `model=qwen-image-2512` 时必需 |
+| Qwen Image 2512 Turbo LoRA | `QWEN_IMAGE_LORA_PATH` | `Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps` | https://huggingface.co/Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps | 使用 `qwen_image` 时默认加载 |
 | Qwen 图片编辑基座 | `QWEN_EDIT_MODEL_PATH` | `Qwen/Qwen-Image-Edit-2511` | https://huggingface.co/Qwen/Qwen-Image-Edit-2511 | 使用 `qwen_edit*` / `qwen_unblur_upscale*` 时必需 |
 | Qwen 去模糊高清 LoRA | `QWEN_UNBLUR_UPSCALE_LORA_PATH` | `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale | 使用 `qwen_unblur_upscale*` 时必需 |
 | Qwen LoRA 权重文件 | `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` | `Qwen-Image-Edit-Unblur-Upscale_20.safetensors` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale/tree/main | 使用 `qwen_unblur_upscale*` 时必需 |
@@ -136,6 +138,16 @@ Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动
 DEFAULT_ENHANCE_MODE=flux
 DEFAULT_NEGATIVE_PROMPT=extra hands, extra fingers, malformed hands, bad hands, fused fingers, missing fingers, extra arms, deformed limbs, mutated body, bad anatomy, disfigured, distorted face, low quality
 FLUX_REFINE_STRENGTH=0.08
+QWEN_IMAGE_MODEL_NAME=qwen-image-2512
+QWEN_IMAGE_MODEL_PATH=unsloth/Qwen-Image-2512-unsloth-bnb-4bit
+QWEN_IMAGE_PIPELINE_CLASS=QwenImagePipeline
+QWEN_IMAGE_LORA_PATH=Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps
+QWEN_IMAGE_LORA_WEIGHT_NAME=
+QWEN_IMAGE_LORA_ADAPTER_NAME=qwen_image_2512_turbo
+QWEN_IMAGE_LORA_SCALE=1.0
+QWEN_IMAGE_STEPS=2
+QWEN_IMAGE_GUIDANCE_SCALE=1.0
+QWEN_IMAGE_TRUE_CFG_SCALE=1.0
 QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit-2511
 QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline
 QWEN_EDIT_STEPS=10
@@ -167,11 +179,14 @@ REALESRGAN_TILE=512
 
 `DEFAULT_NEGATIVE_PROMPT` 是全局默认反向词。当前端不传 `negative_prompt` 时会直接使用该配置；当前端传入时，服务会按英文逗号、中文逗号、分号和换行拆分后去重合并，避免重复堆叠相同反向词。
 
+`enhance_mode` 是独立的处理链路选择参数，显式传入时优先级高于 `model`。`qwen_image` 可通过两种方式启用：请求里传 `model=qwen-image-2512` 且不传 `enhance_mode`，或显式传 `enhance_mode=qwen_image`。前者适合 New API / OpenAI 兼容网关按模型名设置默认链路；后者适合直接调用本服务并明确指定处理模式。也就是说，`model=qwen-image-2512` + `enhance_mode=qwen_unblur_upscale_realesrgan` 会走 Qwen Image Edit 2511 + Unblur/Upscale LoRA + Real-ESRGAN 链路，而不是强制走 2512。`/v1/images/generations` 不传 `image` 时走文生图，`/v1/images/edits` 或 generations 传 `image` 时会把原图传给当前选定链路。`QWEN_IMAGE_MODEL_PATH` 默认使用 Unsloth 官方 Diffusers 4-bit 仓库 `unsloth/Qwen-Image-2512-unsloth-bnb-4bit`；如果要用 `unsloth/Qwen-Image-2512-GGUF`，需要改接 ComfyUI-GGUF 或 stable-diffusion.cpp 后端，不能直接用当前 Diffusers 服务加载单个 `.gguf` 文件。`QWEN_IMAGE_LORA_PATH` 默认使用 `Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps`，`QWEN_IMAGE_STEPS=2` 对应该 Turbo LoRA 推荐的低步数生图。
+
 模式说明：
 
 | 模式 | 说明 | 文字一致性 |
 | --- | --- | --- |
 | `flux` | FLUX 文生图/图生图；图生图会按 `flux_refine_strength` 低强度参考原图重绘 | 可能改变文字 |
+| `qwen_image` | Qwen Image 2512 Diffusers 4-bit 生图/高清编辑，默认加载 Turbo LoRA 并使用 2 步推理 | 取决于提示词 |
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
 | `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖目标尺寸，再缩放到 4K，不进 FLUX | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
@@ -399,6 +414,14 @@ curl -X POST http://127.0.0.1:8000/v1/images/generations ^
   -d "{\"prompt\":\"A cat holding a sign that says hello world\",\"size\":\"768x768\",\"num_inference_steps\":4,\"seed\":0}"
 ```
 
+### Qwen Image 2512 Turbo 文生图 JSON
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/generations ^
+  -H "Content-Type: application/json" ^
+  -d "{\"model\":\"qwen-image-2512\",\"prompt\":\"A cinematic Chinese ink painting of a dragon over mountains\",\"size\":\"1024x1024\",\"seed\":0}"
+```
+
 提交后会立即返回：
 
 ```json
@@ -539,6 +562,20 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "resolution=4k" ^
   -F "enhance_mode=flux" ^
   -F "flux_refine_strength=0.08" ^
+  -F "seed=0"
+```
+
+如果希望 `/v1/images/edits` 在高清 4K 时直接使用 Qwen Image 2512 Diffusers 4-bit + Turbo LoRA，可以使用模型名默认路由，或显式传 `enhance_mode=qwen_image`：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/images/edits ^
+  -F "model=qwen-image-2512" ^
+  -F "enhance_mode=qwen_image" ^
+  -F "prompt=Enhance this image to a clean high detail 4K version, unblur and upscale, preserve the original composition, identity, text, colors, layout, and details" ^
+  -F "image=@input.png" ^
+  -F "aspect_ratio=16:9" ^
+  -F "resolution=4k" ^
+  -F "upscale_fit_mode=cover" ^
   -F "seed=0"
 ```
 
