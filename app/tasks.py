@@ -1,8 +1,6 @@
 import asyncio
 import logging
-import multiprocessing
 import os
-import signal
 import sys
 import time
 import uuid
@@ -35,53 +33,9 @@ def suppress_output():
         sys.stderr = old_stderr
 
 
-def _task_execution_worker(payload: dict, reference_image_b64: Optional[str]) -> dict:
-    """子进程执行函数,隔离OOM和崩溃"""
-    import traceback
-    
-    try:
-        from app.main import _run_task_payload
-        from app.image_utils import string_to_image
-        
-        reference_image = string_to_image(reference_image_b64) if reference_image_b64 else None
-        result = _run_task_payload(payload, reference_image)
-        
-        # 将结果转换为可序列化格式
-        if isinstance(result, dict):
-            return {"success": True, "data": result}
-        else:
-            return {"success": True, "data": {"result": result}}
-    except MemoryError as e:
-        return {"success": False, "error": "MemoryError", "message": str(e), "is_oom": True}
-    except Exception as e:
-        return {"success": False, "error": type(e).__name__, "message": str(e), "traceback": traceback.format_exc()}
-
-
 async def _run_task_in_subprocess(self, payload: dict, reference_image: Optional[Image.Image]) -> dict:
-    """在子进程中执行任务,隔离OOM和崩溃"""
-    import base64
-    from app.image_utils import image_to_base64_png
-    
-    reference_image_b64 = image_to_base64_png(reference_image) if reference_image else None
-    
-    loop = asyncio.get_event_loop()
-    
-    # 使用线程池运行子进程,避免阻塞事件循环
-    result = await loop.run_in_executor(
-        None,
-        _task_execution_worker,
-        payload,
-        reference_image_b64
-    )
-    
-    if not result["success"]:
-        if result.get("is_oom"):
-            raise MemoryError(result.get("message", "Out of memory"))
-        else:
-            error_msg = result.get("message", "Unknown error")
-            raise RuntimeError(error_msg)
-    
-    return result["data"]
+    """运行任务 payload。历史命名保留，但当前直接使用注入的异步 runner。"""
+    return await self.runner(payload, reference_image)
 
 
 def check_gpu_memory() -> dict:
@@ -321,7 +275,7 @@ class ImageTaskManager:
         
         heartbeat_task = asyncio.create_task(self._heartbeat_running_task(task))
         try:
-            # 在子进程中执行任务,隔离OOM和崩溃
+            # 执行任务 payload。异常交由下方分支记录为失败任务。
             task.result = await self._run_task_in_subprocess(task.payload, task.reference_image)
             task.status = "succeeded"
             task.completed = int(time.time())
