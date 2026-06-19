@@ -60,7 +60,7 @@ class ImageGenerationRequest(BaseModel):
     width: Optional[int] = Field(default=None, ge=64)
     height: Optional[int] = Field(default=None, ge=64)
     num_inference_steps: Optional[int] = Field(default=None, ge=1)
-    seed: Optional[int] = 0
+    seed: Optional[int] = 42
     response_format: str = "url"
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
