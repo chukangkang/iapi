@@ -96,10 +96,6 @@ async def _run_task_in_subprocess(self, payload: dict, reference_image: Optional
     return result["data"]
 
 
-# 为ImageTaskManager添加方法引用
-ImageTaskManager._run_task_in_subprocess = _run_task_in_subprocess
-
-
 def check_gpu_memory() -> dict:
     """检查GPU显存使用情况"""
     try:
@@ -580,3 +576,6 @@ class ImageTaskManager:
             socket_timeout=max(self.settings.redis_socket_timeout, self.settings.redis_block_timeout + 5),
             health_check_interval=30,
         )
+
+
+ImageTaskManager._run_task_in_subprocess = _run_task_in_subprocess
