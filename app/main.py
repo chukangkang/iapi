@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel, Field, field_validator, model_serializer
 
 from app.config import Settings, get_settings
 from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
@@ -66,6 +66,16 @@ class ImageGenerationRequest(BaseModel):
     upscale_fit_mode: Optional[str] = None
     flux_refine_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     qwen_edit_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _normalize_response_format(cls, value: Any) -> str:
+        if value is None:
+            return "url"
+        normalized = str(value).strip().lower()
+        if normalized in {"base64", "b64"}:
+            return "b64_json"
+        return normalized or "url"
 
 
 class ImageData(BaseModel):
@@ -706,7 +716,7 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
     if payload.n != 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if payload.response_format not in {"url", "b64_json"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url' or 'b64_json'")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url', 'b64_json', or 'base64'")
     if payload.enhance_mode and payload.enhance_mode not in {"flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

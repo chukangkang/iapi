@@ -47,7 +47,7 @@ def string_to_image(value: Optional[str]) -> Optional[Image.Image]:
     value = value.strip()
     data_url_match = DATA_URL_PATTERN.match(value)
     if data_url_match:
-        return bytes_to_image(base64.b64decode(data_url_match.group("data"), validate=True))
+        return bytes_to_image(_decode_base64_image(data_url_match.group("data")))
 
     parsed = urlparse(value)
     if parsed.scheme in {"http", "https"}:
@@ -67,12 +67,17 @@ def string_to_image(value: Optional[str]) -> Optional[Image.Image]:
             ) from exc
 
     try:
-        return bytes_to_image(base64.b64decode(value, validate=True))
+        return bytes_to_image(_decode_base64_image(value))
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Image must be a URL, base64 string, data URL, or multipart file",
         ) from exc
+
+
+def _decode_base64_image(value: str) -> bytes:
+    compact_value = re.sub(r"\s+", "", value)
+    return base64.b64decode(compact_value, validate=True)
 
 
 def bytes_to_image(content: bytes) -> Image.Image:
