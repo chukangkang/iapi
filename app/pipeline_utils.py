@@ -8,14 +8,14 @@ logger = logging.getLogger(__name__)
 
 def apply_pipeline_memory_settings(pipe: object, settings: Settings) -> None:
     if settings.enable_vae_tiling:
-        _call_first_available(pipe, ("enable_vae_tiling",)) or _call_vae_method(pipe, "enable_tiling")
+        _call_vae_method(pipe, "enable_tiling") or _call_first_available(pipe, ("enable_vae_tiling",))
     else:
-        _call_first_available(pipe, ("disable_vae_tiling",)) or _call_vae_method(pipe, "disable_tiling")
+        _call_vae_method(pipe, "disable_tiling") or _call_first_available(pipe, ("disable_vae_tiling",))
 
     if settings.enable_vae_slicing:
-        _call_first_available(pipe, ("enable_vae_slicing",)) or _call_vae_method(pipe, "enable_slicing")
+        _call_vae_method(pipe, "enable_slicing") or _call_first_available(pipe, ("enable_vae_slicing",))
     else:
-        _call_first_available(pipe, ("disable_vae_slicing",)) or _call_vae_method(pipe, "disable_slicing")
+        _call_vae_method(pipe, "disable_slicing") or _call_first_available(pipe, ("disable_vae_slicing",))
 
     if settings.enable_attention_slicing:
         _call_first_available(pipe, ("enable_attention_slicing",))
