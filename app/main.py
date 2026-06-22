@@ -115,6 +115,7 @@ class ImageTaskResultResponse(BaseModel):
     updated: str
     started: Optional[str] = None
     completed: Optional[str] = None
+    duration: Optional[int] = None
     worker_id: Optional[int] = None
     worker_name: Optional[str] = None
     result: Optional[ImageResponse] = None
@@ -428,6 +429,7 @@ async def _task_to_result_response(task: ImageTask) -> ImageTaskResultResponse:
         updated=_format_time(task.updated),
         started=_format_time(task.started),
         completed=_format_time(task.completed),
+        duration=_task_duration(task.started, task.completed, task.status),
         worker_id=task.worker_id,
         worker_name=task.worker_name,
         result=task.result,
@@ -445,11 +447,21 @@ async def _task_metadata_to_result_response(task: dict[str, Any]) -> ImageTaskRe
         updated=_format_time(task["updated"]),
         started=_format_time(task.get("started")),
         completed=_format_time(task.get("completed")),
+        duration=_task_duration(task.get("started"), task.get("completed"), task["status"]),
         worker_id=task.get("worker_id"),
         worker_name=task.get("worker_name"),
         result=result,
         error=task.get("error"),
     )
+
+
+def _task_duration(started: Optional[int], completed: Optional[int], status: str) -> Optional[int]:
+    if started is None:
+        return None
+    end_time = completed or (int(time.time()) if status == "running" else None)
+    if end_time is None:
+        return None
+    return max(0, end_time - started)
 
 
 async def _parse_generation_request(request: Request) -> ImageGenerationRequest:
