@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     prompt_enhance_enabled: bool = True
     prompt_enhance_short_max_chars: int = Field(default=80, ge=1)
     prompt_enhance_suffix: str = "high quality, detailed, natural lighting, realistic, clean composition"
-    prompt_enhance_person_suffix: str = "Chinese person, East Asian facial features, contemporary Chinese style"
+    prompt_enhance_person_suffix: str = ""
     default_enhance_mode: Literal["flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
     qwen_image_model_name: str = "qwen-image-2512"

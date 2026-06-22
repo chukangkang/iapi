@@ -919,7 +919,7 @@ def _enhance_prompt(prompt: Optional[str], reference_image, app_settings: Settin
         return user_prompt
 
     additions = []
-    if PERSON_PROMPT_PATTERN.search(user_prompt) and not ETHNICITY_PROMPT_PATTERN.search(user_prompt):
+    if PERSON_PROMPT_PATTERN.search(user_prompt) and not ETHNICITY_PROMPT_PATTERN.search(user_prompt) and app_settings.prompt_enhance_person_suffix:
         additions.append(app_settings.prompt_enhance_person_suffix)
     if app_settings.prompt_enhance_suffix:
         additions.append(app_settings.prompt_enhance_suffix)
