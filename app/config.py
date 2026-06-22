@@ -106,7 +106,9 @@ class Settings(BaseSettings):
     output_dir: Path = Path("outputs")
     public_base_url: str = ""
     hf_token: str = ""
-    enable_cpu_offload: bool = True
+    enable_cpu_offload: bool = False
+    enable_vae_tiling: bool = True
+    enable_attention_slicing: bool = False
     pytorch_cuda_alloc_conf: str = "expandable_segments:True"
     tokenizers_parallelism: str = "false"
     oss_endpoint: str = ""

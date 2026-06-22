@@ -10,6 +10,7 @@ from typing import Optional
 from PIL import Image, ImageOps
 
 from app.config import Settings
+from app.pipeline_utils import apply_pipeline_memory_settings
 
 
 logger = logging.getLogger(__name__)
@@ -296,6 +297,7 @@ class QwenImageService:
             pipe.enable_model_cpu_offload()
         else:
             pipe.to(self._device)
+        apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
 

@@ -1,10 +1,16 @@
 import asyncio
+import gc
 import inspect
+import logging
 from typing import Optional
 
 from PIL import Image
 
 from app.config import Settings
+from app.pipeline_utils import apply_pipeline_memory_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class FluxImageService:
@@ -98,11 +104,38 @@ class FluxImageService:
         else:
             pipe.to(self._device)
 
+        apply_pipeline_memory_settings(pipe, self.settings)
+
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
 
         self._pipe = pipe
         return pipe
+
+    def unload(self) -> None:
+        if self._pipe is None:
+            return
+        try:
+            if not self.settings.enable_cpu_offload and hasattr(self._pipe, "to"):
+                self._pipe.to("cpu")
+                logger.info("Moved FLUX pipeline to CPU before release")
+            else:
+                logger.info("Releasing FLUX pipeline")
+        except Exception as exc:
+            logger.warning("Failed to unload FLUX pipeline: %s", exc)
+        self._pipe = None
+        self._release_torch_memory()
+
+    def _release_torch_memory(self) -> None:
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception as exc:
+            logger.debug("Failed to release torch cache: %s", exc)
 
     def _resolve_device(self, torch) -> str:
         if self.settings.device != "auto":

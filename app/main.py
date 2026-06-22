@@ -145,7 +145,13 @@ _storage: Optional[ImageStorage] = None
 def _get_flux_service() -> Any:
     from app.flux_service import FluxImageService
 
-    global _service
+    global _service, _qwen_image_service, _qwen_edit_service
+    if _qwen_image_service is not None:
+        _qwen_image_service.unload()
+        _qwen_image_service = None
+    if _qwen_edit_service is not None:
+        _qwen_edit_service.unload()
+        _qwen_edit_service = None
     if _service is None:
         _service = FluxImageService(settings)
     return _service
@@ -154,7 +160,10 @@ def _get_flux_service() -> Any:
 def _get_qwen_image_service() -> Any:
     from app.qwen_image_service import QwenImageService
 
-    global _qwen_image_service, _qwen_edit_service
+    global _service, _qwen_image_service, _qwen_edit_service
+    if _service is not None:
+        _service.unload()
+        _service = None
     if _qwen_edit_service is not None:
         _qwen_edit_service.unload()
         _qwen_edit_service = None
@@ -166,7 +175,10 @@ def _get_qwen_image_service() -> Any:
 def _get_qwen_edit_service() -> Any:
     from app.qwen_edit_service import QwenImageEditService
 
-    global _qwen_edit_service, _qwen_image_service
+    global _service, _qwen_edit_service, _qwen_image_service
+    if _service is not None:
+        _service.unload()
+        _service = None
     if _qwen_image_service is not None:
         _qwen_image_service.unload()
         _qwen_image_service = None
@@ -502,7 +514,7 @@ async def _run_image_request(
 ) -> ImageResponse:
     _validate_image_payload(payload, app_settings)
 
-    output_width, output_height = _resolve_dimensions(payload, app_settings)
+    output_width, output_height = _resolve_dimensions(payload, app_settings, reference_image)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
     prompt = _enhance_prompt(payload.prompt, reference_image, app_settings)
@@ -642,7 +654,7 @@ async def _prepare_image_request(
     app_settings: Settings,
 ) -> None:
     _validate_image_payload(payload, app_settings)
-    output_width, output_height = _resolve_dimensions(payload, app_settings)
+    output_width, output_height = _resolve_dimensions(payload, app_settings, reference_image)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
 
     if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
@@ -748,9 +760,12 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
         )
 
 
-def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:
+def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings, reference_image=None) -> tuple[int, int]:
     if payload.endpoint == "edits":
-        return _resolve_edit_dimensions(payload, app_settings)
+        return _resolve_edit_dimensions(payload, app_settings, reference_image)
+
+    if reference_image is not None and not payload.aspect_ratio:
+        return SIZE_PRESETS[_closest_preset_aspect_ratio(reference_image, SIZE_PRESETS.keys())]
 
     aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio or "1:1")
     if aspect_ratio not in SIZE_PRESETS:
@@ -762,9 +777,9 @@ def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings)
     return SIZE_PRESETS[aspect_ratio]
 
 
-def _resolve_edit_dimensions(payload: ImageGenerationRequest, app_settings: Settings) -> tuple[int, int]:
+def _resolve_edit_dimensions(payload: ImageGenerationRequest, app_settings: Settings, reference_image=None) -> tuple[int, int]:
     if payload.aspect_ratio or payload.resolution:
-        aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio or "1:1")
+        aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio) if payload.aspect_ratio else _closest_preset_aspect_ratio(reference_image, EDIT_SIZE_PRESETS.keys())
         resolution = (payload.resolution or "2k").lower()
         if (aspect_ratio, resolution) not in EDIT_SIZE_PRESETS:
             supported = ", ".join(f"{ratio}/{res}" for ratio, res in EDIT_SIZE_PRESETS)
@@ -783,7 +798,40 @@ def _resolve_edit_dimensions(payload: ImageGenerationRequest, app_settings: Sett
             height = height or int(size_height)
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="size must look like '1024x1024'") from exc
+    if reference_image is not None and width is None and height is None and not payload.size:
+        return _dimensions_from_reference_aspect_ratio(reference_image, (app_settings.default_width, app_settings.default_height))
     return width or app_settings.default_width, height or app_settings.default_height
+
+
+def _dimensions_from_reference_aspect_ratio(reference_image, base_size: tuple[int, int]) -> tuple[int, int]:
+    base_width, base_height = base_size
+    if reference_image.width <= 0 or reference_image.height <= 0:
+        return base_width, base_height
+    target_pixels = base_width * base_height
+    aspect_ratio = reference_image.width / reference_image.height
+    width = _multiple_of_16((target_pixels * aspect_ratio) ** 0.5)
+    height = _multiple_of_16(width / aspect_ratio)
+    return width, height
+
+
+def _closest_preset_aspect_ratio(reference_image, preset_keys) -> str:
+    if reference_image is None or reference_image.width <= 0 or reference_image.height <= 0:
+        return "1:1"
+    source_ratio = reference_image.width / reference_image.height
+    ratios = sorted(_preset_aspect_ratios(preset_keys))
+    return min(ratios, key=lambda ratio: abs(_aspect_ratio_value(ratio) - source_ratio))
+
+
+def _preset_aspect_ratios(preset_keys) -> set[str]:
+    ratios = set()
+    for key in preset_keys:
+        ratios.add(key[0] if isinstance(key, tuple) else key)
+    return ratios
+
+
+def _aspect_ratio_value(value: str) -> float:
+    width, height = _normalize_aspect_ratio(value).split(":", 1)
+    return int(width) / int(height)
 
 
 def _resolve_generation_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:

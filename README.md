@@ -661,6 +661,6 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 - 默认 `DEVICE=auto`，优先 CUDA，其次 MPS，最后 CPU。
 - 默认 `TORCH_DTYPE=bfloat16`，如果硬件不支持可改成 `float16` 或 `float32`。
 - `TOKENIZERS_PARALLELISM=false` 用于关闭 tokenizer fork warning；这是提示不是错误。
-- 4090 24G 跑 `FLUX.2-klein-9b-kv` 会比较贴边，默认配置使用 Qwen Image 2512 标准 `1:1` 尺寸 `1328x1328`、`ENABLE_CPU_OFFLOAD=true` 和 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 来优先保证稳定出图。
-- 如果标准尺寸仍 OOM，保持 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存；不建议再通过 `resolution` 或 `size` 扩大输出尺寸。
+- 24G 显存且模型使用 4bit 时，默认配置倾向速度：`ENABLE_CPU_OFFLOAD=false`、`ENABLE_ATTENTION_SLICING=false`、`ENABLE_VAE_TILING=true`，让模型尽量驻留显存，仅在 VAE 解码阶段分块降低峰值。
+- 如果标准尺寸仍 OOM，可临时改回 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存；不建议再通过 `resolution` 或 `size` 扩大输出尺寸。
 - 配置 OSS 后优先返回 OSS URL；未配置 OSS 时，`PUBLIC_BASE_URL` 为空会返回本地相对路径，部署到公网时建议设置为服务外部访问地址。
