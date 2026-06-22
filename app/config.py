@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     hf_token: str = ""
     enable_cpu_offload: bool = False
     enable_vae_tiling: bool = True
+    enable_vae_slicing: bool = True
     enable_attention_slicing: bool = False
     pytorch_cuda_alloc_conf: str = "expandable_segments:True"
     tokenizers_parallelism: str = "false"

@@ -12,6 +12,11 @@ def apply_pipeline_memory_settings(pipe: object, settings: Settings) -> None:
     else:
         _call_first_available(pipe, ("disable_vae_tiling",)) or _call_vae_method(pipe, "disable_tiling")
 
+    if settings.enable_vae_slicing:
+        _call_first_available(pipe, ("enable_vae_slicing",)) or _call_vae_method(pipe, "enable_slicing")
+    else:
+        _call_first_available(pipe, ("disable_vae_slicing",)) or _call_vae_method(pipe, "disable_slicing")
+
     if settings.enable_attention_slicing:
         _call_first_available(pipe, ("enable_attention_slicing",))
     else:
