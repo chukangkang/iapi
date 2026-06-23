@@ -1,8 +1,8 @@
 from fastapi import HTTPException
 from PIL import Image
 
-from app.image_utils import image_to_base64_png, string_to_image
-from app.main import ImageGenerationRequest, _resolve_dimensions, _validate_image_payload
+from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image
+from app.main import ImageGenerationRequest, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _validate_image_payload
 from app.config import Settings
 
 
@@ -31,6 +31,15 @@ def test_string_to_image_accepts_data_url_with_whitespace():
     assert image.size == (2, 2)
 
 
+def test_string_list_to_images_accepts_two_images():
+    encoded = _sample_base64_png()
+
+    images = string_list_to_images([encoded, encoded])
+
+    assert len(images) == 2
+    assert images[0].size == (2, 2)
+
+
 def test_response_format_accepts_base64_alias():
     payload = ImageGenerationRequest(prompt="test", response_format="base64")
 
@@ -49,6 +58,31 @@ def test_response_format_rejects_unknown_values():
         assert "response_format" in exc.detail
     else:
         raise AssertionError("Expected invalid response_format to fail")
+
+
+def test_image_request_accepts_two_image_values():
+    encoded = _sample_base64_png()
+    payload = ImageGenerationRequest(prompt="merge", model="qwen-image-2512", image=[encoded, encoded])
+
+    _validate_image_payload(payload, Settings())
+
+    reference_image = _payload_image_to_reference(payload.image)
+    assert isinstance(reference_image, list)
+    assert len(reference_image) == 2
+    assert _resolve_enhance_mode(payload, Settings()) == "qwen_edit"
+
+
+def test_image_request_rejects_three_image_values():
+    encoded = _sample_base64_png()
+    payload = ImageGenerationRequest(prompt="merge", image=[encoded, encoded, encoded])
+
+    try:
+        _validate_image_payload(payload, Settings())
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "one or two" in exc.detail
+    else:
+        raise AssertionError("Expected more than two image values to fail")
 
 
 def test_generation_dimensions_use_reference_aspect_ratio_when_missing():

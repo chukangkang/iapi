@@ -11,13 +11,16 @@
 支持：
 
 - 文生图（t2i）：只传 `prompt`
-- 图生图（i2i）：传 `prompt` + `image`
+- 图生图（i2i）：传 `prompt` + 单个 `image`
+- 图片合并：传 `prompt` + 两个 `image`，需使用 `model=qwen-image-2512` 或显式 `enhance_mode=qwen_edit`，底层走 Qwen Image Edit 2511 原生多图编辑能力
 
 `image` 支持：
 
-- JSON 字段中的图片 URL
-- JSON 字段中的 base64 / data URL
-- multipart 表单文件
+- JSON 字段中的图片 URL 字符串，或最多两个图片 URL 数组
+- JSON 字段中的 base64 / data URL 字符串，或最多两个 base64 / data URL 数组
+- multipart 表单文件；多图时重复提交两个同名 `image` 文件字段
+
+单图请求会保持原来的图生图模式；双图请求会作为图片合并任务处理。当前最多支持两张输入图，三张及以上会返回 `400`。
 
 常用参数：
 
@@ -34,6 +37,29 @@
 | `enhance_mode` | 高清/保真模式：`flux`、`qwen_image`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
 | `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
 | `n` | 当前仅支持 `1` | `1` |
+
+单图图生图示例：
+
+```json
+{
+  "model": "qwen-image-2512",
+  "prompt": "Sharpen details, preserve the original image composition",
+  "image": "http://vocaldo.oss-cn-beijing.aliyuncs.com/comfy/cat.png"
+}
+```
+
+双图合并示例：
+
+```json
+{
+  "model": "qwen-image-2512",
+  "prompt": "Combine the subject from the first image with the scene from the second image, keep natural lighting",
+  "image": [
+    "https://example.com/subject.png",
+    "https://example.com/background.png"
+  ]
+}
+```
 
 ### `POST /v1/images/edits`
 

@@ -33,7 +33,7 @@ class QwenImageEditService:
         *,
         prompt: str,
         negative_prompt: Optional[str],
-        image: Image.Image,
+        image: Image.Image | list[Image.Image],
         width: int,
         height: int,
         num_inference_steps: int,
@@ -72,7 +72,7 @@ class QwenImageEditService:
         *,
         prompt: str,
         negative_prompt: Optional[str],
-        image: Image.Image,
+        image: Image.Image | list[Image.Image],
         width: int,
         height: int,
         num_inference_steps: int,
@@ -90,7 +90,7 @@ class QwenImageEditService:
         signature = inspect.signature(pipe.__call__).parameters
         kwargs = {
             "prompt": prompt,
-            "image": self._prepare_image(image, width, height),
+            "image": self._prepare_image_input(image, width, height),
             "height": height,
             "width": width,
             "num_inference_steps": num_inference_steps,
@@ -142,6 +142,11 @@ class QwenImageEditService:
             return ImageOps.fit(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         color = self.settings.qwen_edit_background_color
         return ImageOps.pad(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, color=color, centering=(0.5, 0.5))
+
+    def _prepare_image_input(self, image: Image.Image | list[Image.Image], width: int, height: int) -> Image.Image | list[Image.Image]:
+        if isinstance(image, list):
+            return [self._prepare_image(item, width, height) for item in image]
+        return self._prepare_image(image, width, height)
 
     def _get_pipeline(self):
         import torch

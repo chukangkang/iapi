@@ -19,6 +19,10 @@ def image_to_base64_png(image: Image.Image) -> str:
     return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+def images_to_base64_png_list(images: list[Image.Image]) -> list[str]:
+    return [image_to_base64_png(image) for image in images]
+
+
 def save_png(image: Image.Image, output_dir: Path, filename: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / filename
@@ -73,6 +77,17 @@ def string_to_image(value: Optional[str]) -> Optional[Image.Image]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Image must be a URL, base64 string, data URL, or multipart file",
         ) from exc
+
+
+def string_list_to_images(values: Optional[list[str]]) -> list[Image.Image]:
+    if not values:
+        return []
+    images: list[Image.Image] = []
+    for value in values:
+        image = string_to_image(value)
+        if image is not None:
+            images.append(image)
+    return images
 
 
 def _decode_base64_image(value: str) -> bytes:

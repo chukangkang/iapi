@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_serializer
 
 from app.config import Settings, get_settings
-from app.image_utils import image_to_base64_png, string_to_image, upload_file_to_image
+from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
 
@@ -52,7 +52,7 @@ class ImageGenerationRequest(BaseModel):
     task_id: Optional[str] = None
     prompt: Optional[str] = None
     negative_prompt: Optional[str] = None
-    image: Optional[str] = None
+    image: Optional[str | list[str]] = None
     n: int = Field(default=1, ge=1, le=1)
     size: Optional[str] = None
     aspect_ratio: Optional[str] = None
@@ -473,12 +473,24 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data") or content_type.startswith("application/x-www-form-urlencoded"):
         form = await request.form()
-        image_file = form.get("image")
-        image_value = form.get("image") if isinstance(form.get("image"), str) else None
+        image_items = form.getlist("image")
+        image_files = [item for item in image_items if hasattr(item, "read")]
+        image_values = [str(item) for item in image_items if isinstance(item, str) and str(item).strip()]
+        image_file = image_files[0] if image_files else form.get("image")
+        image_value: Optional[str | list[str]] = image_values[0] if len(image_values) == 1 else image_values or None
         reference_image = None
-        if hasattr(image_file, "read"):
-            reference_image = await upload_file_to_image(image_file)
-            image_value = image_to_base64_png(reference_image) if reference_image is not None else None
+        if image_files:
+            reference_images = []
+            for image_file in image_files:
+                uploaded_image = await upload_file_to_image(image_file)
+                if uploaded_image is not None:
+                    reference_images.append(uploaded_image)
+            if len(reference_images) == 1:
+                reference_image = reference_images[0]
+                image_value = image_to_base64_png(reference_image)
+            elif reference_images:
+                reference_image = reference_images
+                image_value = [image_to_base64_png(image) for image in reference_images]
 
         mask = form.get("mask")
         if hasattr(mask, "read"):
@@ -505,7 +517,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             qwen_edit_strength=_optional_float(form.get("qwen_edit_strength")),
         )
         if reference_image is None:
-            reference_image = string_to_image(payload.image)
+            reference_image = _payload_image_to_reference(payload.image)
         _apply_prompt_params(payload)
         return payload, reference_image
 
@@ -515,7 +527,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Request body must be JSON or form data") from exc
     payload = ImageGenerationRequest.model_validate(body)
     _apply_prompt_params(payload)
-    return payload, string_to_image(payload.image)
+    return payload, _payload_image_to_reference(payload.image)
 
 
 async def _run_image_request(
@@ -526,10 +538,12 @@ async def _run_image_request(
 ) -> ImageResponse:
     _validate_image_payload(payload, app_settings)
 
-    output_width, output_height = _resolve_dimensions(payload, app_settings, reference_image)
+    primary_reference_image = _primary_reference_image(reference_image)
+    reference_image_count = _reference_image_count(reference_image)
+    output_width, output_height = _resolve_dimensions(payload, app_settings, primary_reference_image)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
-    prompt = _enhance_prompt(payload.prompt, reference_image, app_settings)
+    prompt = _enhance_prompt(payload.prompt, primary_reference_image, app_settings)
     negative_prompt = _merge_negative_prompt(app_settings.default_negative_prompt, payload.negative_prompt)
     metadata = {
         "enhance_mode": enhance_mode,
@@ -537,8 +551,9 @@ async def _run_image_request(
         "original_prompt": payload.prompt,
         "target_width": output_width,
         "target_height": output_height,
-        "source_width": reference_image.width if reference_image is not None else None,
-        "source_height": reference_image.height if reference_image is not None else None,
+        "source_width": primary_reference_image.width if primary_reference_image is not None else None,
+        "source_height": primary_reference_image.height if primary_reference_image is not None else None,
+        "source_image_count": reference_image_count,
         "upscale_fit_mode": upscale_fit_mode,
         "upscale_fill_color": app_settings.upscale_fill_color,
     }
@@ -551,6 +566,8 @@ async def _run_image_request(
         metadata["realesrgan_max_passes"] = app_settings.realesrgan_max_passes
         metadata["realesrgan_denoise_strength"] = app_settings.realesrgan_denoise_strength
     if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+        if reference_image_count > 1 and enhance_mode != "qwen_edit":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple input images are only supported for qwen_edit mode.")
         generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
         qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
@@ -560,6 +577,7 @@ async def _run_image_request(
             metadata["qwen_image_i2i_fallback"] = "qwen_edit"
         metadata["qwen_edit_strength"] = qwen_strength
         metadata["qwen_edit_prompt"] = qwen_prompt
+        metadata["qwen_edit_task_type"] = "image_merge" if reference_image_count > 1 else "image_to_image"
         metadata["qwen_edit_width"] = generation_width
         metadata["qwen_edit_height"] = generation_height
         if is_unblur_upscale:
@@ -592,10 +610,10 @@ async def _run_image_request(
         metadata["output_height"] = image.height
         return _image_response(image, payload, metadata)
 
-    if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
+    if primary_reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
         image = await _get_upscale_service().upscale(
-            reference_image,
+            primary_reference_image,
             width=output_width,
             height=output_height,
             method=upscale_method,
@@ -607,6 +625,7 @@ async def _run_image_request(
             return _image_response(image, payload, metadata)
 
         reference_image = image
+        primary_reference_image = image
 
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     if enhance_mode == "qwen_image":
@@ -622,13 +641,13 @@ async def _run_image_request(
         metadata["qwen_image_scheduler_exponential_shift_mu"] = app_settings.qwen_image_scheduler_exponential_shift_mu
         metadata["qwen_image_scheduler_use_dynamic_shifting"] = app_settings.qwen_image_scheduler_use_dynamic_shifting
         metadata["qwen_image_scheduler_shift_terminal"] = app_settings.qwen_image_scheduler_shift_terminal
-        metadata["qwen_image_task_type"] = "image_to_image" if reference_image is not None else "text_to_image"
+        metadata["qwen_image_task_type"] = "image_to_image" if primary_reference_image is not None else "text_to_image"
         metadata["qwen_image_width"] = generation_width
         metadata["qwen_image_height"] = generation_height
         image = await qwen_image_service.generate(
             prompt=prompt,
             negative_prompt=negative_prompt,
-            image=reference_image,
+            image=primary_reference_image,
             width=generation_width,
             height=generation_height,
             num_inference_steps=payload.num_inference_steps or app_settings.qwen_image_steps,
@@ -644,12 +663,12 @@ async def _run_image_request(
     image = await _get_flux_service().generate(
         prompt=prompt,
         negative_prompt=negative_prompt,
-        image=reference_image,
+        image=primary_reference_image,
         width=generation_width,
         height=generation_height,
         num_inference_steps=payload.num_inference_steps or app_settings.num_inference_steps,
         seed=payload.seed,
-        strength=(payload.flux_refine_strength or app_settings.flux_refine_strength) if reference_image is not None else None,
+        strength=(payload.flux_refine_strength or app_settings.flux_refine_strength) if primary_reference_image is not None else None,
     )
     if image.size != (output_width, output_height):
         image = image.resize((output_width, output_height))
@@ -666,10 +685,14 @@ async def _prepare_image_request(
     app_settings: Settings,
 ) -> None:
     _validate_image_payload(payload, app_settings)
-    output_width, output_height = _resolve_dimensions(payload, app_settings, reference_image)
+    primary_reference_image = _primary_reference_image(reference_image)
+    reference_image_count = _reference_image_count(reference_image)
+    output_width, output_height = _resolve_dimensions(payload, app_settings, primary_reference_image)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
 
     if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+        if reference_image_count > 1 and enhance_mode != "qwen_edit":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple input images are only supported for qwen_edit mode.")
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
         await _get_qwen_edit_service().prepare(
             lora_path=app_settings.qwen_unblur_upscale_lora_path if is_unblur_upscale else None,
@@ -683,7 +706,7 @@ async def _prepare_image_request(
         await _get_qwen_image_service().prepare()
         return
 
-    if reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
+    if primary_reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         if enhance_mode in {"realesrgan", "realesrgan_flux"}:
             await _get_upscale_service().prepare(method="realesrgan")
         if enhance_mode == "realesrgan_flux":
@@ -756,6 +779,11 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="image is required for Qwen Edit enhance modes.",
         )
+    if isinstance(payload.image, list):
+        if not 1 <= len(payload.image) <= 2:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image must contain one or two images")
+        if len(payload.image) == 2 and _resolve_enhance_mode(payload, app_settings) != "qwen_edit":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Two input images are only supported for qwen_edit mode or qwen-image-2512 model.")
     realesrgan_enhance_modes = {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}
     if payload.enhance_mode in realesrgan_enhance_modes and app_settings.service_role != "api":
         from app.upscale_service import realesrgan_available, realesrgan_import_error
@@ -874,6 +902,27 @@ def _resolve_enhance_mode(payload: ImageGenerationRequest, app_settings: Setting
             return "qwen_edit"
         return "qwen_image"
     return app_settings.default_enhance_mode
+
+
+def _payload_image_to_reference(image: Optional[str | list[str]]) -> Optional[Any]:
+    if isinstance(image, list):
+        images = string_list_to_images(image)
+        if len(images) == 1:
+            return images[0]
+        return images or None
+    return string_to_image(image)
+
+
+def _primary_reference_image(reference_image) -> Optional[Any]:
+    if isinstance(reference_image, list):
+        return reference_image[0] if reference_image else None
+    return reference_image
+
+
+def _reference_image_count(reference_image) -> int:
+    if isinstance(reference_image, list):
+        return len(reference_image)
+    return 1 if reference_image is not None else 0
 
 
 def _is_qwen_image_model(model: Optional[str], app_settings: Settings) -> bool:

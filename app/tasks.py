@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable, Optional
 from PIL import Image
 
 from app.config import Settings
-from app.image_utils import image_to_base64_png, string_to_image
+from app.image_utils import image_to_base64_png, images_to_base64_png_list, string_list_to_images, string_to_image
 from app.task_store import ImageTaskMetadataStore
 
 
@@ -33,7 +33,7 @@ def suppress_output():
         sys.stderr = old_stderr
 
 
-async def _run_task_in_subprocess(self, payload: dict, reference_image: Optional[Image.Image]) -> dict:
+async def _run_task_in_subprocess(self, payload: dict, reference_image: Optional[Image.Image | list[Image.Image]]) -> dict:
     """运行任务 payload。历史命名保留，但当前直接使用注入的异步 runner。"""
     return await self.runner(payload, reference_image)
 
@@ -95,8 +95,8 @@ def check_process_health() -> dict:
 class ImageTask:
     id: str
     payload: object
-    reference_image: Optional[Image.Image]
-    reference_image_data: Optional[str] = None
+    reference_image: Optional[Image.Image | list[Image.Image]]
+    reference_image_data: Optional[str | list[str]] = None
     status: TaskStatus = "queued"
     created: int = field(default_factory=lambda: int(time.time()))
     updated: int = field(default_factory=lambda: int(time.time()))
@@ -136,7 +136,7 @@ class ImageTaskManager:
     def __init__(
         self,
         settings: Settings,
-        runner: Callable[[object, Optional[Image.Image]], Awaitable[object]],
+        runner: Callable[[object, Optional[Image.Image | list[Image.Image]]], Awaitable[object]],
         payload_factory: Optional[Callable[[dict], object]] = None,
         prepare_runner: Optional[Callable[[object, Optional[Image.Image]], Awaitable[None]]] = None,
         affinity_key_factory: Optional[Callable[[object, bool], str]] = None,
@@ -190,8 +190,8 @@ class ImageTaskManager:
             await self.redis.aclose()
             self.redis = None
 
-    async def submit(self, payload: object, reference_image: Optional[Image.Image]) -> ImageTask:
-        reference_image_data = image_to_base64_png(reference_image) if reference_image is not None else None
+    async def submit(self, payload: object, reference_image: Optional[Image.Image | list[Image.Image]]) -> ImageTask:
+        reference_image_data = _serialize_reference_image(reference_image)
         task = ImageTask(
             id=f"img-{uuid.uuid4().hex}",
             payload=payload,
@@ -470,7 +470,7 @@ class ImageTaskManager:
         if self.payload_factory is not None:
             payload = self.payload_factory(payload)
         reference_image_data = task_metadata.get("reference_image")
-        reference_image = string_to_image(reference_image_data)
+        reference_image = _deserialize_reference_image(reference_image_data)
         return ImageTask(
             id=task_metadata["id"],
             payload=payload,
@@ -616,3 +616,19 @@ class ImageTaskManager:
 
 
 ImageTaskManager._run_task_in_subprocess = _run_task_in_subprocess
+
+
+def _serialize_reference_image(reference_image: Optional[Image.Image | list[Image.Image]]) -> Optional[str | list[str]]:
+    if reference_image is None:
+        return None
+    if isinstance(reference_image, list):
+        return images_to_base64_png_list(reference_image)
+    return image_to_base64_png(reference_image)
+
+
+def _deserialize_reference_image(reference_image_data: Optional[str | list[str]]) -> Optional[Image.Image | list[Image.Image]]:
+    if reference_image_data is None:
+        return None
+    if isinstance(reference_image_data, list):
+        return string_list_to_images(reference_image_data)
+    return string_to_image(reference_image_data)

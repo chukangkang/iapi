@@ -89,7 +89,7 @@ class ImageTaskMetadataStore:
 
     def save(self, task: object) -> None:
         payload_json = self._payload_to_json(getattr(task, "payload", None))
-        reference_image = getattr(task, "reference_image_data", None)
+        reference_image = self._reference_image_to_text(getattr(task, "reference_image_data", None))
         result_json = self._result_to_json(getattr(task, "result", None))
         with self._connect() as connection:
             params = (
@@ -163,6 +163,7 @@ class ImageTaskMetadataStore:
         result = dict(row)
         result["payload"] = json.loads(result.pop("payload_json")) if result.get("payload_json") else None
         result["result"] = json.loads(result.pop("result_json")) if result.get("result_json") else None
+        result["reference_image"] = self._reference_image_from_text(result.get("reference_image"))
         return result
 
     def list_by_status(self, statuses: list[str], limit: int = 1000) -> list[dict]:
@@ -225,6 +226,7 @@ class ImageTaskMetadataStore:
         result = dict(row)
         result["payload"] = json.loads(result.pop("payload_json")) if result.get("payload_json") else None
         result["result"] = json.loads(result.pop("result_json")) if result.get("result_json") else None
+        result["reference_image"] = self._reference_image_from_text(result.get("reference_image"))
         return result
 
     def _result_to_json(self, result: Any) -> Optional[str]:
@@ -240,6 +242,25 @@ class ImageTaskMetadataStore:
         if hasattr(payload, "model_dump"):
             return json.dumps(payload.model_dump(), ensure_ascii=False)
         return json.dumps(payload, ensure_ascii=False)
+
+    def _reference_image_to_text(self, reference_image: Any) -> Optional[str]:
+        if reference_image is None:
+            return None
+        if isinstance(reference_image, list):
+            return json.dumps(reference_image, ensure_ascii=False)
+        return str(reference_image)
+
+    def _reference_image_from_text(self, reference_image: Any) -> Any:
+        if not isinstance(reference_image, str):
+            return reference_image
+        text = reference_image.strip()
+        if not text.startswith("["):
+            return reference_image
+        try:
+            decoded = json.loads(text)
+        except json.JSONDecodeError:
+            return reference_image
+        return decoded if isinstance(decoded, list) else reference_image
 
     def _ensure_sqlite_column(self, connection: sqlite3.Connection, column: str, definition: str) -> None:
         rows = connection.execute("PRAGMA table_info(image_tasks)").fetchall()
