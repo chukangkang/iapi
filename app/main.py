@@ -819,8 +819,10 @@ def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings,
 
 def _resolve_edit_dimensions(payload: ImageGenerationRequest, app_settings: Settings, reference_image=None) -> tuple[int, int]:
     if payload.aspect_ratio or payload.resolution:
-        aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio) if payload.aspect_ratio else _closest_preset_aspect_ratio(reference_image, EDIT_SIZE_PRESETS.keys())
         resolution = (payload.resolution or "2k").lower()
+        if payload.resolution and not payload.aspect_ratio and reference_image is not None:
+            return _edit_dimensions_from_reference_resolution(reference_image, resolution)
+        aspect_ratio = _normalize_aspect_ratio(payload.aspect_ratio) if payload.aspect_ratio else _closest_preset_aspect_ratio(reference_image, EDIT_SIZE_PRESETS.keys())
         if (aspect_ratio, resolution) not in EDIT_SIZE_PRESETS:
             supported = ", ".join(f"{ratio}/{res}" for ratio, res in EDIT_SIZE_PRESETS)
             raise HTTPException(
@@ -841,6 +843,29 @@ def _resolve_edit_dimensions(payload: ImageGenerationRequest, app_settings: Sett
     if reference_image is not None and width is None and height is None and not payload.size:
         return _dimensions_from_reference_aspect_ratio(reference_image, (app_settings.default_width, app_settings.default_height))
     return width or app_settings.default_width, height or app_settings.default_height
+
+
+def _edit_dimensions_from_reference_resolution(reference_image, resolution: str) -> tuple[int, int]:
+    long_side_by_resolution = {
+        "2k": 2560,
+        "4k": 4096,
+    }
+    long_side = long_side_by_resolution.get(resolution)
+    if long_side is None:
+        supported = ", ".join(sorted(long_side_by_resolution))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported resolution for edits with reference aspect ratio. Supported: {supported}",
+        )
+    if reference_image is None or reference_image.width <= 0 or reference_image.height <= 0:
+        return long_side, long_side
+    if reference_image.width >= reference_image.height:
+        width = long_side
+        height = _multiple_of_16(long_side * reference_image.height / reference_image.width)
+    else:
+        height = long_side
+        width = _multiple_of_16(long_side * reference_image.width / reference_image.height)
+    return width, height
 
 
 def _dimensions_from_reference_aspect_ratio(reference_image, base_size: tuple[int, int]) -> tuple[int, int]:

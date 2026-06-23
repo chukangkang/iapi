@@ -111,6 +111,16 @@ def test_edit_resolution_uses_reference_aspect_ratio_when_missing():
     assert _resolve_dimensions(payload, Settings(), reference_image) == (2560, 1440)
 
 
+def test_edit_4k_resolution_preserves_reference_aspect_ratio_when_missing():
+    payload = ImageGenerationRequest(endpoint="edits", prompt="test", image=_sample_base64_png(), resolution="4k")
+    reference_image = Image.new("RGB", (1000, 1500), "red")
+
+    width, height = _resolve_dimensions(payload, Settings(), reference_image)
+
+    assert (width, height) == (2736, 4096)
+    assert abs((width / height) - (1000 / 1500)) < 0.002
+
+
 def test_explicit_edit_dimensions_override_reference_aspect_ratio():
     payload = ImageGenerationRequest(endpoint="edits", prompt="test", image=_sample_base64_png(), size="1024x768")
     reference_image = Image.new("RGB", (900, 1600), "red")

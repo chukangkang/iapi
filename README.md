@@ -96,6 +96,8 @@
 
 对 `/v1/images/generations` 来说，`size`、`resolution` 和请求里的 `seed` 不再是推荐调用参数；`seed` 未传时默认使用 `0`，生成尺寸由 `aspect_ratio` 唯一决定。`/v1/images/edits` 仍保留 `resolution=4k`、`size=3840x2160` 等高清超分输出能力。
 
+`/v1/images/edits` 只传 `resolution=2k/4k` 且不传 `aspect_ratio` 时，会按原图宽高比计算目标尺寸：`4k` 表示原图长边放到 `4096`，`2k` 表示原图长边放到 `2560`，另一边按原比例取 16 的倍数。这样高清修复默认保持原图尺寸比例，不会裁剪；只有显式传 `aspect_ratio` 时才会使用上表预设比例。
+
 如果目标是视频高清、海报高清、字幕/商品图文字保真，建议不要用默认 FLUX 重绘，而是使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
 
 ## 安装
@@ -178,32 +180,33 @@ QWEN_IMAGE_GUIDANCE_SCALE=1.0
 QWEN_IMAGE_TRUE_CFG_SCALE=1.0
 QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit-2511
 QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline
-QWEN_EDIT_STEPS=10
+QWEN_EDIT_STEPS=4
 QWEN_EDIT_GUIDANCE_SCALE=1.0
-QWEN_EDIT_TRUE_CFG_SCALE=4.0
-QWEN_EDIT_STRENGTH=0.7
+QWEN_EDIT_TRUE_CFG_SCALE=2.0
+QWEN_EDIT_STRENGTH=0.18
 QWEN_EDIT_SCALE_TO_SIDE=longest
-QWEN_EDIT_SCALE_TO_LENGTH=2048
+QWEN_EDIT_SCALE_TO_LENGTH=1280
 QWEN_EDIT_ROUND_TO_MULTIPLE=16
+QWEN_EDIT_INPUT_FIT_MODE=contain
 QWEN_EDIT_BACKGROUND_COLOR=#000000
 QWEN_EDIT_QUANTIZATION=none
 QWEN_EDIT_DEVICE_MAP=balanced
 QWEN_UNBLUR_UPSCALE_LORA_PATH=prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale
 QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME=Qwen-Image-Edit-Unblur-Upscale_20.safetensors
-QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT=unblur and upscale
-QWEN_UNBLUR_UPSCALE_LORA_SCALE=1.0
+QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT=unblur and upscale, preserve the original composition, identity, text, colors, layout, and details
+QWEN_UNBLUR_UPSCALE_LORA_SCALE=0.25
 PIXEL_SHARPEN_ENABLED=true
-PIXEL_SHARPEN_RADIUS=1.4
-PIXEL_SHARPEN_PERCENT=140
-PIXEL_SHARPEN_THRESHOLD=3
-UPSCALE_FIT_MODE=cover
+PIXEL_SHARPEN_RADIUS=0.9
+PIXEL_SHARPEN_PERCENT=80
+PIXEL_SHARPEN_THRESHOLD=8
+UPSCALE_FIT_MODE=contain
 UPSCALE_FILL_COLOR=black
 # Required for enhance_mode=realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.
 # Set to the directory containing REALESRGAN_MODEL_NAME, or to a concrete .pth file.
 REALESRGAN_MODEL_PATH=/root/xinglin-data/chat/weights
-REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
-REALESRGAN_MAX_PASSES=2
-REALESRGAN_DENOISE_STRENGTH=0.35
+REALESRGAN_MODEL_NAME=RealESRGAN_x4plus.pth
+REALESRGAN_MAX_PASSES=1
+REALESRGAN_DENOISE_STRENGTH=0.10
 REALESRGAN_TILE=512
 ```
 
@@ -246,19 +249,21 @@ REALESRGAN_TILE=512
 
 如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到标准目标尺寸；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真缩放和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
 
-如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 标准尺寸输出” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到 `aspect_ratio` 对应的标准目标尺寸。
+如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清输出” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到请求目标尺寸；`resolution=4k` 且未传 `aspect_ratio` 时会保持原图宽高比。
 
-`QWEN_EDIT_TRUE_CFG_SCALE=4.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，更贴近 Qwen Image Edit 2511 / Plus pipeline 的推荐调用方式；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS` 建议从 `10` 起步，画质通常比 `4` 步稳定。
+如果高清结果出现重影、二次轮廓或边缘拖影，优先把链路调轻：`QWEN_EDIT_STRENGTH` 保持在 `0.15` 到 `0.25`，`QWEN_UNBLUR_UPSCALE_LORA_SCALE` 保持在 `0.2` 到 `0.35`，并用 `UPSCALE_FIT_MODE=contain` 避免裁切后再次重采样。像素锐化也不要太猛，`PIXEL_SHARPEN_PERCENT=80`、`PIXEL_SHARPEN_THRESHOLD=8` 更适合保守高清；如果仍有白边/鬼影，可先把 `PIXEL_SHARPEN_ENABLED=false` 单独排查。
+
+`QWEN_EDIT_TRUE_CFG_SCALE=2.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，通常比 `4.0` 更少产生过拟合边缘；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS=4` 适合配合 Unblur/Upscale LoRA 做低步数轻修复，如果要更强重绘可逐步升到 `6` 或 `8`，但重影风险也会增加。
 
 `qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`。`QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT` 会自动拼到用户请求的 `prompt` 前面以触发 LoRA，不会覆盖用户提示词；如果请求提示词里已经包含触发词，则不会重复拼接。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
 
-截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH=2048`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。服务会先把参考图按最长边缩放到 2048，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到 `aspect_ratio` 对应的标准尺寸。
+截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。为减少重影，推荐先用 `QWEN_EDIT_SCALE_TO_LENGTH=1280` 轻修复；如果源图本身很清晰且显存充足，再尝试 `1536` 或 `2048`。服务会先把参考图按最长边缩放，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到 `aspect_ratio` 对应的标准尺寸。
 
 4090 24G 显存紧张时可开启 Qwen Edit 量化：`QWEN_EDIT_QUANTIZATION=8bit`。更省显存可试 `4bit`，但速度和画质可能波动；量化依赖 Linux 下的 `bitsandbytes` 和支持 `PipelineQuantizationConfig` 的新版 Diffusers，默认 `none` 不启用。量化加载时 `QWEN_EDIT_DEVICE_MAP` 可选 `balanced`、`cuda`、`cpu`，默认 `balanced`；`8bit + balanced` 会启用 CPU fp32 offload，牺牲速度换稳定加载。若使用已经量化好的 Diffusers 仓库，例如 `ovedrive/Qwen-Image-Edit-2511-4bit`，请保持 `QWEN_EDIT_QUANTIZATION=none`，并设置 `QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline`。
 
-`REALESRGAN_MAX_PASSES=2` 表示最多连续做 2 轮 x4 超分：例如小图会先超分到足够覆盖目标标准尺寸，再缩放到最终尺寸，避免一次插值硬拉导致模糊。显存紧张时可调为 `1`。
+`REALESRGAN_MAX_PASSES=1` 更适合避免二次超分造成的重复纹理和重影；只有输入图非常小、目标尺寸又很大时再考虑调到 `2`。`RealESRGAN_x4plus.pth` 细节增强更强，适合照片；如果更看重文字/线条保真，也可以改回 `realesr-general-x4v3.pth` 并保持较低锐化强度。
 
-`UPSCALE_FIT_MODE=cover` 会保持原图比例并居中裁剪到目标标准尺寸，避免黑边，也避免强行拉伸导致字体变形。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。高清输出推荐保持 `cover`。
+`UPSCALE_FIT_MODE=contain` 会保持原图比例并补边到目标标准尺寸，能避免 `cover` 居中裁剪后再次重采样带来的边缘重影。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。若业务必须铺满画面再改回 `cover`。
 
 当前 `realesrgan` Python 推理包需要 `.pth` 权重，不能直接加载 Hugging Face/Qualcomm 目录里的 `model.safetensors`。推荐下载最新版通用小模型 `realesr-general-x4v3.pth`，文字/视频高清场景先用它；`realesr-general-wdn-x4v3.pth` 是强降噪搭配权重，可选下载到同一目录。
 
