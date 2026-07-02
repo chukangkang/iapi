@@ -10,13 +10,22 @@ def apply_pipeline_cpu_offload(pipe: object, settings: Settings, device: str) ->
     if not settings.enable_cpu_offload or not device.startswith("cuda"):
         return False
 
-    if _call_first_available(pipe, ("enable_sequential_cpu_offload",)):
-        logger.info("Enabled sequential CPU offload for pipeline")
-        return True
+    if settings.cpu_offload_mode == "sequential":
+        if _call_first_available(pipe, ("enable_sequential_cpu_offload",)):
+            logger.info("Enabled sequential CPU offload for pipeline")
+            return True
 
-    if _call_first_available(pipe, ("enable_model_cpu_offload",)):
         logger.warning(
             "Pipeline does not support sequential CPU offload; falling back to model CPU offload"
+        )
+
+    if _call_first_available(pipe, ("enable_model_cpu_offload",)):
+        logger.info("Enabled model CPU offload for pipeline")
+        return True
+
+    if settings.cpu_offload_mode == "model" and _call_first_available(pipe, ("enable_sequential_cpu_offload",)):
+        logger.warning(
+            "Pipeline does not support model CPU offload; falling back to slower sequential CPU offload"
         )
         return True
 

@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     public_base_url: str = ""
     hf_token: str = ""
     enable_cpu_offload: bool = False
+    cpu_offload_mode: Literal["model", "sequential"] = "model"
     enable_vae_tiling: bool = True
     enable_vae_slicing: bool = True
     enable_attention_slicing: bool = False
