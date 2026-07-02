@@ -799,12 +799,6 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Real-ESRGAN dependencies cannot be imported. Install/fix realesrgan and basicsr, or use enhance_mode=pixel. Import error: {realesrgan_import_error()}",
             )
-    if payload.enhance_mode in realesrgan_enhance_modes and app_settings.service_role != "api" and not app_settings.realesrgan_model_path.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="REALESRGAN_MODEL_PATH is required for Real-ESRGAN enhance modes: realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.",
-        )
-
 
 def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings, reference_image=None) -> tuple[int, int]:
     if payload.endpoint == "edits":

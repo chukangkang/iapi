@@ -60,6 +60,12 @@ def test_response_format_rejects_unknown_values():
         raise AssertionError("Expected invalid response_format to fail")
 
 
+def test_realesrgan_enhance_mode_allows_empty_model_path_for_default_weights():
+    payload = ImageGenerationRequest(prompt="test", image=_sample_base64_png(), enhance_mode="realesrgan")
+
+    _validate_image_payload(payload, Settings(service_role="api", realesrgan_model_path=""))
+
+
 def test_image_request_accepts_two_image_values():
     encoded = _sample_base64_png()
     payload = ImageGenerationRequest(prompt="merge", model="qwen-image-2512", image=[encoded, encoded])
