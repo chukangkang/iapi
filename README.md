@@ -710,5 +710,5 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 - 默认 `TORCH_DTYPE=bfloat16`，如果硬件不支持可改成 `float16` 或 `float32`。
 - `TOKENIZERS_PARALLELISM=false` 用于关闭 tokenizer fork warning；这是提示不是错误。
 - 24G 显存且模型使用 4bit 时，默认配置倾向速度：`ENABLE_CPU_OFFLOAD=false`、`ENABLE_ATTENTION_SLICING=false`、`ENABLE_VAE_TILING=true`、`ENABLE_VAE_SLICING=true`，让模型尽量驻留显存，仅在 VAE 解码阶段分块/切片降低峰值。
-- 如果标准尺寸仍 OOM，可临时改回 `ENABLE_CPU_OFFLOAD=true`，并确认没有其他进程占用显存；不建议再通过 `resolution` 或 `size` 扩大输出尺寸。
+- 如果标准尺寸仍 OOM，可临时改回 `ENABLE_CPU_OFFLOAD=true`；该选项会优先启用 `enable_sequential_cpu_offload` 做分层卸载以降低显存峰值，不支持时才回退到 `enable_model_cpu_offload`。同时确认没有其他进程占用显存，不建议再通过 `resolution` 或 `size` 扩大输出尺寸。
 - 配置 OSS 后优先返回 OSS URL；未配置 OSS 时，`PUBLIC_BASE_URL` 为空会返回本地相对路径，部署到公网时建议设置为服务外部访问地址。

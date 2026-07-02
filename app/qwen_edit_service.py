@@ -9,7 +9,7 @@ from typing import Optional
 from PIL import Image, ImageOps
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_memory_settings
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings
 from app.qwen_image_service import ModelManager, _model_manager
 
 
@@ -182,8 +182,7 @@ class QwenImageEditService:
         cpu_offload_enabled = False
         if quantization_config is not None:
             pass
-        elif self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda"):
-            pipe.enable_model_cpu_offload()
+        elif apply_pipeline_cpu_offload(pipe, self.settings, self._device):
             cpu_offload_enabled = True
         else:
             pipe.to(self._device)

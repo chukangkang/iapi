@@ -6,6 +6,24 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
+def apply_pipeline_cpu_offload(pipe: object, settings: Settings, device: str) -> bool:
+    if not settings.enable_cpu_offload or not device.startswith("cuda"):
+        return False
+
+    if _call_first_available(pipe, ("enable_sequential_cpu_offload",)):
+        logger.info("Enabled sequential CPU offload for pipeline")
+        return True
+
+    if _call_first_available(pipe, ("enable_model_cpu_offload",)):
+        logger.warning(
+            "Pipeline does not support sequential CPU offload; falling back to model CPU offload"
+        )
+        return True
+
+    logger.warning("CPU offload requested, but pipeline does not expose an offload method")
+    return False
+
+
 def apply_pipeline_memory_settings(pipe: object, settings: Settings) -> None:
     if settings.enable_vae_tiling:
         _call_vae_method(pipe, "enable_tiling") or _call_first_available(pipe, ("enable_vae_tiling",))

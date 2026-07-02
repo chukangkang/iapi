@@ -7,7 +7,7 @@ from typing import Optional
 from PIL import Image
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_memory_settings
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings
 
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ class FluxImageService:
         self._pipe = None
         self._device = None
         self._dtype = None
+        self._cpu_offload_enabled = False
 
     async def generate(
         self,
@@ -99,9 +100,8 @@ class FluxImageService:
 
         pipe = Flux2KleinKVPipeline.from_pretrained(self.settings.model_path, **load_kwargs)
 
-        if self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda"):
-            pipe.enable_model_cpu_offload()
-        else:
+        self._cpu_offload_enabled = apply_pipeline_cpu_offload(pipe, self.settings, self._device)
+        if not self._cpu_offload_enabled:
             pipe.to(self._device)
 
         apply_pipeline_memory_settings(pipe, self.settings)
@@ -116,7 +116,7 @@ class FluxImageService:
         if self._pipe is None:
             return
         try:
-            if not self.settings.enable_cpu_offload and hasattr(self._pipe, "to"):
+            if not self._cpu_offload_enabled and hasattr(self._pipe, "to"):
                 self._pipe.to("cpu")
                 logger.info("Moved FLUX pipeline to CPU before release")
             else:
@@ -124,6 +124,7 @@ class FluxImageService:
         except Exception as exc:
             logger.warning("Failed to unload FLUX pipeline: %s", exc)
         self._pipe = None
+        self._cpu_offload_enabled = False
         self._release_torch_memory()
 
     def _release_torch_memory(self) -> None:

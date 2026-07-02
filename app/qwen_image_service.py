@@ -10,7 +10,7 @@ from typing import Optional
 from PIL import Image, ImageOps
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_memory_settings
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings
 
 
 logger = logging.getLogger(__name__)
@@ -292,10 +292,8 @@ class QwenImageService:
         else:
             pipe = pipeline_cls.from_pretrained(model_path, **load_kwargs)
 
-        cpu_offload_enabled = self.settings.enable_cpu_offload and hasattr(pipe, "enable_model_cpu_offload") and self._device.startswith("cuda")
-        if cpu_offload_enabled:
-            pipe.enable_model_cpu_offload()
-        else:
+        cpu_offload_enabled = apply_pipeline_cpu_offload(pipe, self.settings, self._device)
+        if not cpu_offload_enabled:
             pipe.to(self._device)
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
