@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     realesrgan_tile: int = Field(default=512, ge=0)
     realesrgan_tile_pad: int = Field(default=10, ge=0)
     realesrgan_pre_pad: int = Field(default=0, ge=0)
+    realesrgan_face_enhance: bool = False
     realesrgan_fp32: bool = False
     realesrgan_gpu_id: Optional[int] = None
     realesrgan_alpha_upsampler: Literal["realesrgan", "bicubic"] = "realesrgan"

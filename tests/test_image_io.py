@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image
-from app.main import ImageGenerationRequest, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _validate_image_payload
+from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _validate_image_payload
 from app.config import Settings
 
 
@@ -126,3 +126,16 @@ def test_explicit_edit_dimensions_override_reference_aspect_ratio():
     reference_image = Image.new("RGB", (900, 1600), "red")
 
     assert _resolve_dimensions(payload, Settings(), reference_image) == (1024, 768)
+
+
+def test_face_enhance_request_overrides_settings():
+    assert _resolve_face_enhance(ImageGenerationRequest(prompt="test", face_enhance=True), Settings(realesrgan_face_enhance=False)) is True
+    assert _resolve_face_enhance(ImageGenerationRequest(prompt="test", face_enhance=False), Settings(realesrgan_face_enhance=True)) is False
+
+
+def test_face_enhance_can_be_read_from_prompt_params():
+    payload = ImageGenerationRequest(prompt="restore portrait [face_enhance=true]")
+
+    _apply_prompt_params(payload)
+
+    assert payload.face_enhance is True

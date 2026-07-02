@@ -95,6 +95,29 @@ def test_realesrgan_upsampler_uses_env_defaults(tmp_path):
     assert FakeRealESRGANer.last_kwargs["gpu_id"] == 1
 
 
+def test_realesrgan_face_enhancer_uses_official_gfpgan_defaults(tmp_path):
+    model_path = tmp_path / "RealESRGAN_x4plus.pth"
+    model_path.write_bytes(b"model")
+    service = ImageUpscaleService(
+        Settings(
+            realesrgan_model_path=str(model_path),
+            realesrgan_model_name="RealESRGAN_x4plus",
+            realesrgan_face_enhance=True,
+            realesrgan_outscale=3,
+        )
+    )
+    _, spec = service._resolve_realesrgan_model()
+    upsampler = service._get_upsampler(FakeRealESRGANer, FakeRRDBNet, FakeSRVGGNet, _unexpected_download, model_path, spec)
+
+    service._get_face_enhancer(FakeGFPGANer, upsampler)
+
+    assert FakeGFPGANer.last_kwargs["model_path"].endswith("GFPGANv1.3.pth")
+    assert FakeGFPGANer.last_kwargs["upscale"] == 3
+    assert FakeGFPGANer.last_kwargs["arch"] == "clean"
+    assert FakeGFPGANer.last_kwargs["channel_multiplier"] == 2
+    assert FakeGFPGANer.last_kwargs["bg_upsampler"] is upsampler
+
+
 def _unexpected_download(**_kwargs):
     raise AssertionError("download should not be called")
 
@@ -114,3 +137,10 @@ class FakeRRDBNet:
 class FakeSRVGGNet:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+
+
+class FakeGFPGANer:
+    last_kwargs = None
+
+    def __init__(self, **kwargs):
+        self.__class__.last_kwargs = kwargs

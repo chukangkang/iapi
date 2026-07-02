@@ -91,6 +91,8 @@ class ImageUpscaleService:
         self.settings = settings
         self._upsampler = None
         self._upsampler_key = None
+        self._face_enhancer = None
+        self._face_enhancer_key = None
 
     async def upscale(
         self,
@@ -100,6 +102,7 @@ class ImageUpscaleService:
         height: int,
         method: str,
         fit_mode: str,
+        face_enhance: Optional[bool] = None,
     ) -> Image.Image:
         return await asyncio.to_thread(
             self._upscale_sync,
@@ -108,6 +111,7 @@ class ImageUpscaleService:
             height=height,
             method=method,
             fit_mode=fit_mode,
+            face_enhance=face_enhance,
         )
 
     async def prepare(self, *, method: str) -> None:
@@ -125,12 +129,16 @@ class ImageUpscaleService:
         from basicsr.archs.srvgg_arch import SRVGGNetCompact
         from basicsr.utils.download_util import load_file_from_url
 
-        self._get_upsampler(RealESRGANer, RRDBNet, SRVGGNetCompact, load_file_from_url, model_path, spec)
+        upsampler = self._get_upsampler(RealESRGANer, RRDBNet, SRVGGNetCompact, load_file_from_url, model_path, spec)
+        if self.settings.realesrgan_face_enhance:
+            from gfpgan import GFPGANer
 
-    def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str, fit_mode: str) -> Image.Image:
+            self._get_face_enhancer(GFPGANer, upsampler)
+
+    def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str, fit_mode: str, face_enhance: Optional[bool] = None) -> Image.Image:
         image = image.convert("RGB")
         if method == "realesrgan":
-            upscaled = self._realesrgan_upscale(image, width=width, height=height, fit_mode=fit_mode)
+            upscaled = self._realesrgan_upscale(image, width=width, height=height, fit_mode=fit_mode, face_enhance=face_enhance)
             if upscaled is not None:
                 return upscaled
         upscaled = self._fit_to_target(image, width=width, height=height, fit_mode=fit_mode)
@@ -147,7 +155,7 @@ class ImageUpscaleService:
             )
         )
 
-    def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int, fit_mode: str) -> Optional[Image.Image]:
+    def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int, fit_mode: str, face_enhance: Optional[bool] = None) -> Optional[Image.Image]:
         model_path, spec = self._resolve_realesrgan_model()
 
         _patch_torchvision_functional_tensor()
@@ -164,6 +172,22 @@ class ImageUpscaleService:
         enhance_kwargs = {"outscale": outscale}
         if "alpha_upsampler" in inspect.signature(upsampler.enhance).parameters:
             enhance_kwargs["alpha_upsampler"] = self.settings.realesrgan_alpha_upsampler
+        if face_enhance if face_enhance is not None else self.settings.realesrgan_face_enhance:
+            from gfpgan import GFPGANer
+
+            face_enhancer = self._get_face_enhancer(GFPGANer, upsampler)
+            for _ in range(self.settings.realesrgan_max_passes):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    _, _, output = face_enhancer.enhance(
+                        np.array(upscaled),
+                        has_aligned=False,
+                        only_center_face=False,
+                        paste_back=True,
+                    )
+                upscaled = Image.fromarray(output).convert("RGB")
+                if upscaled.width >= width and upscaled.height >= height:
+                    break
+            return self._fit_to_target(upscaled, width=width, height=height, fit_mode=fit_mode)
         for _ in range(self.settings.realesrgan_max_passes):
             with contextlib.redirect_stdout(io.StringIO()):
                 output, _ = upsampler.enhance(np.array(upscaled), **enhance_kwargs)
@@ -262,6 +286,23 @@ class ImageUpscaleService:
         self._upsampler = realesrganer(**upsampler_kwargs)
         self._upsampler_key = upsampler_key
         return self._upsampler
+
+    def _get_face_enhancer(self, gfpganer, upsampler):
+        face_enhancer_key = (
+            id(upsampler),
+            self._resolve_outscale(self._resolve_realesrgan_model_spec()),
+        )
+        if self._face_enhancer is not None and self._face_enhancer_key == face_enhancer_key:
+            return self._face_enhancer
+        self._face_enhancer = gfpganer(
+            model_path="https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth",
+            upscale=self._resolve_outscale(self._resolve_realesrgan_model_spec()),
+            arch="clean",
+            channel_multiplier=2,
+            bg_upsampler=upsampler,
+        )
+        self._face_enhancer_key = face_enhancer_key
+        return self._face_enhancer
 
     def _ensure_model_paths(self, model_path: Path, spec: RealESRGANModelSpec, load_file_from_url):
         model_path = self._ensure_model_file(model_path, spec.url, load_file_from_url)

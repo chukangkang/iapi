@@ -285,9 +285,12 @@ REALESRGAN_MODEL_NAME=realesr-general-x4v3
 REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_OUTSCALE=0
 REALESRGAN_TILE=512
+REALESRGAN_FACE_ENHANCE=false
 REALESRGAN_FP32=false
 REALESRGAN_GPU_ID=
 ```
+
+`REALESRGAN_FACE_ENHANCE=true` 会启用 GFPGAN 人脸增强，适合人像修复；也可以在请求中传 `face_enhance=true`，或写进 prompt 参数 `[face_enhance=true]` 临时开启。该参数只影响 `enhance_mode=realesrgan`、`realesrgan_flux`、`qwen_edit_realesrgan`、`qwen_unblur_upscale_realesrgan` 这类 Real-ESRGAN 链路。
 
 下载地址：
 

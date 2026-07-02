@@ -40,7 +40,7 @@ EDIT_SIZE_PRESETS = {
     ("9:16", "4k"): (2160, 3840),
 }
 
-PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height|qwen_edit_strength)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
+PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height|qwen_edit_strength|face_enhance)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
 SHANGHAI_TIMEZONE = timezone(timedelta(hours=8))
 PERSON_PROMPT_PATTERN = re.compile(r"人|男|女|孩|老人|头像|肖像|portrait|person|people|man|woman|girl|boy|child|face", re.IGNORECASE)
 ETHNICITY_PROMPT_PATTERN = re.compile(r"中国|华人|亚洲|东亚|欧美|美国|欧洲|白人|黑人|日本|韩国|外国|Chinese|Asian|East Asian|Western|American|European|Caucasian|Black|African|Japanese|Korean|foreigner", re.IGNORECASE)
@@ -64,6 +64,7 @@ class ImageGenerationRequest(BaseModel):
     response_format: str = "url"
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
+    face_enhance: Optional[bool] = None
     flux_refine_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     qwen_edit_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
@@ -513,6 +514,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             response_format=_optional_str(form.get("response_format")) or "url",
             enhance_mode=_optional_str(form.get("enhance_mode")),
             upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
+            face_enhance=_optional_bool(form.get("face_enhance")),
             flux_refine_strength=_optional_float(form.get("flux_refine_strength")),
             qwen_edit_strength=_optional_float(form.get("qwen_edit_strength")),
         )
@@ -543,6 +545,7 @@ async def _run_image_request(
     output_width, output_height = _resolve_dimensions(payload, app_settings, primary_reference_image)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
+    face_enhance = _resolve_face_enhance(payload, app_settings)
     prompt = _enhance_prompt(payload.prompt, primary_reference_image, app_settings)
     negative_prompt = _merge_negative_prompt(app_settings.default_negative_prompt, payload.negative_prompt)
     metadata = {
@@ -556,6 +559,7 @@ async def _run_image_request(
         "source_image_count": reference_image_count,
         "upscale_fit_mode": upscale_fit_mode,
         "upscale_fill_color": app_settings.upscale_fill_color,
+        "face_enhance": face_enhance,
     }
     if negative_prompt:
         metadata["negative_prompt"] = negative_prompt
@@ -605,6 +609,7 @@ async def _run_image_request(
             height=output_height,
             method=upscale_method,
             fit_mode=upscale_fit_mode,
+            face_enhance=face_enhance,
         )
         metadata["output_width"] = image.width
         metadata["output_height"] = image.height
@@ -618,6 +623,7 @@ async def _run_image_request(
             height=output_height,
             method=upscale_method,
             fit_mode=upscale_fit_mode,
+            face_enhance=face_enhance,
         )
         if enhance_mode != "realesrgan_flux":
             metadata["output_width"] = image.width
@@ -966,6 +972,10 @@ def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Set
     return payload.upscale_fit_mode or app_settings.upscale_fit_mode
 
 
+def _resolve_face_enhance(payload: ImageGenerationRequest, app_settings: Settings) -> bool:
+    return payload.face_enhance if payload.face_enhance is not None else app_settings.realesrgan_face_enhance
+
+
 def _merge_negative_prompt(default_negative_prompt: str, request_negative_prompt: Optional[str]) -> Optional[str]:
     terms: list[str] = []
     seen: set[str] = set()
@@ -1024,6 +1034,8 @@ def _apply_prompt_params(payload: ImageGenerationRequest) -> None:
             payload.upscale_fit_mode = value.lower()
         elif key == "qwen_edit_strength" and payload.qwen_edit_strength is None:
             payload.qwen_edit_strength = float(value)
+        elif key == "face_enhance" and payload.face_enhance is None:
+            payload.face_enhance = _parse_bool(value)
         elif key == "aspect_ratio" and not payload.aspect_ratio:
             payload.aspect_ratio = value
         elif key == "resolution" and not payload.resolution:
@@ -1068,6 +1080,21 @@ def _optional_float(value: Any) -> Optional[float]:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def _optional_bool(value: Any) -> Optional[bool]:
+    if value is None or value == "":
+        return None
+    return _parse_bool(str(value))
+
+
+def _parse_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid boolean value: {value}")
 
 
 @app.exception_handler(Exception)
