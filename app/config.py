@@ -72,12 +72,16 @@ class Settings(BaseSettings):
     upscale_fit_mode: Literal["stretch", "contain", "cover"] = "cover"
     upscale_fill_color: str = "black"
     realesrgan_model_path: str = ""
-    realesrgan_model_name: str = "realesr-general-x4v3.pth"
+    realesrgan_model_name: str = "realesr-general-x4v3"
     realesrgan_max_passes: int = Field(default=2, ge=1, le=4)
     realesrgan_denoise_strength: float = Field(default=0.35, ge=0.0, le=1.0)
+    realesrgan_outscale: float = Field(default=0.0, ge=0.0)
     realesrgan_tile: int = Field(default=512, ge=0)
     realesrgan_tile_pad: int = Field(default=10, ge=0)
     realesrgan_pre_pad: int = Field(default=0, ge=0)
+    realesrgan_fp32: bool = False
+    realesrgan_gpu_id: Optional[int] = None
+    realesrgan_alpha_upsampler: Literal["realesrgan", "bicubic"] = "realesrgan"
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)
     worker_name: str = ""

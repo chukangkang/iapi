@@ -154,10 +154,10 @@ TOKENIZERS_PARALLELISM=false
 | Qwen 图片编辑基座 | `QWEN_EDIT_MODEL_PATH` | `Qwen/Qwen-Image-Edit-2511` | https://huggingface.co/Qwen/Qwen-Image-Edit-2511 | 使用 `qwen_edit*` / `qwen_unblur_upscale*` 时必需 |
 | Qwen 去模糊高清 LoRA | `QWEN_UNBLUR_UPSCALE_LORA_PATH` | `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale | 使用 `qwen_unblur_upscale*` 时必需 |
 | Qwen LoRA 权重文件 | `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` | `Qwen-Image-Edit-Unblur-Upscale_20.safetensors` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale/tree/main | 使用 `qwen_unblur_upscale*` 时必需 |
-| Real-ESRGAN 通用超分 | `REALESRGAN_MODEL_NAME` | `realesr-general-x4v3.pth` | https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth | 使用 `realesrgan*` 时必需 |
+| Real-ESRGAN 通用超分 | `REALESRGAN_MODEL_NAME` | `realesr-general-x4v3` | https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth | 使用 `realesrgan*` 时自动下载 |
 | Real-ESRGAN 可选降噪权重 | 同目录自动识别 | `realesr-general-wdn-x4v3.pth` | https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth | 可选，配合 `REALESRGAN_DENOISE_STRENGTH` 混合 |
 
-Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动下载到本机缓存；如果服务器不能联网，可提前下载到本地目录，并把对应配置项改成本地路径。Real-ESRGAN 当前代码只加载 `.pth` 权重，需手动下载到 `REALESRGAN_MODEL_PATH` 指向的目录，或直接把 `REALESRGAN_MODEL_PATH` 指向具体 `.pth` 文件。
+Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动下载到本机缓存；如果服务器不能联网，可提前下载到本地目录，并把对应配置项改成本地路径。Real-ESRGAN Python 推理只加载 `.pth` 权重；`REALESRGAN_MODEL_PATH` 为空时会按官网默认下载到项目 `weights/` 目录，也可以把它设置为权重目录或具体 `.pth` 文件。
 
 ### 高清保真模式
 
@@ -201,13 +201,19 @@ PIXEL_SHARPEN_PERCENT=80
 PIXEL_SHARPEN_THRESHOLD=8
 UPSCALE_FIT_MODE=contain
 UPSCALE_FILL_COLOR=black
-# Required for enhance_mode=realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.
-# Set to the directory containing REALESRGAN_MODEL_NAME, or to a concrete .pth file.
-REALESRGAN_MODEL_PATH=/root/xinglin-data/chat/weights
-REALESRGAN_MODEL_NAME=RealESRGAN_x4plus.pth
+# Optional for enhance_mode=realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.
+# Empty means project ./weights; you can also set a directory or a concrete .pth file.
+REALESRGAN_MODEL_PATH=
+REALESRGAN_MODEL_NAME=realesr-general-x4v3
 REALESRGAN_MAX_PASSES=1
 REALESRGAN_DENOISE_STRENGTH=0.10
+REALESRGAN_OUTSCALE=0
 REALESRGAN_TILE=512
+REALESRGAN_TILE_PAD=10
+REALESRGAN_PRE_PAD=0
+REALESRGAN_FP32=false
+REALESRGAN_GPU_ID=
+REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 ```
 
 `DEFAULT_NEGATIVE_PROMPT` 是全局默认反向词。当前端不传 `negative_prompt` 时会直接使用该配置；当前端传入时，服务会按英文逗号、中文逗号、分号和换行拆分后去重合并，避免重复堆叠相同反向词。
@@ -263,16 +269,24 @@ REALESRGAN_TILE=512
 
 `REALESRGAN_MAX_PASSES=1` 更适合避免二次超分造成的重复纹理和重影；只有输入图非常小、目标尺寸又很大时再考虑调到 `2`。`RealESRGAN_x4plus.pth` 细节增强更强，适合照片；如果更看重文字/线条保真，也可以改回 `realesr-general-x4v3.pth` 并保持较低锐化强度。
 
+Real-ESRGAN 推理默认参数都可以放在 `.env`：`REALESRGAN_OUTSCALE=0` 表示按所选模型的原生倍率输出，例如 x2 模型用 2、x4 模型用 4；设置为 `3.5` 这类正数时，会使用官网脚本里的任意输出倍率逻辑。`REALESRGAN_FP32=true` 等价于官网 `--fp32`，会关闭半精度；`REALESRGAN_GPU_ID=0` 等价于 `--gpu-id 0`，为空时由 Real-ESRGAN 自动选择；`REALESRGAN_ALPHA_UPSAMPLER` 可选 `realesrgan` 或 `bicubic`，对应透明通道处理方式。
+
 `UPSCALE_FIT_MODE=contain` 会保持原图比例并补边到目标标准尺寸，能避免 `cover` 居中裁剪后再次重采样带来的边缘重影。可选值：`cover` 保比例居中裁剪、`contain` 保比例补边、`stretch` 强制拉伸。若业务必须铺满画面再改回 `cover`。
 
-当前 `realesrgan` Python 推理包需要 `.pth` 权重，不能直接加载 Hugging Face/Qualcomm 目录里的 `model.safetensors`。推荐下载最新版通用小模型 `realesr-general-x4v3.pth`，文字/视频高清场景先用它；`realesr-general-wdn-x4v3.pth` 是强降噪搭配权重，可选下载到同一目录。
+当前 `realesrgan` Python 推理包需要 `.pth` 权重，不能直接加载 Hugging Face/Qualcomm 目录里的 `model.safetensors`。默认使用官方通用小模型 `realesr-general-x4v3`，首次运行会自动下载 `realesr-general-x4v3.pth`；当 `REALESRGAN_DENOISE_STRENGTH < 1.0` 时，还会自动下载同目录的强降噪搭配权重 `realesr-general-wdn-x4v3.pth` 做 DNI 混合。
+
+支持的 `REALESRGAN_MODEL_NAME` 与官网一致：`RealESRGAN_x4plus`、`RealESRNet_x4plus`、`RealESRGAN_x4plus_anime_6B`、`RealESRGAN_x2plus`、`realesr-animevideov3`、`realesr-general-x4v3`、`realesr-general-wdn-x4v3`。也兼容 NCNN 便携版里的短横线模型名，例如 `realesrgan-x4plus`、`realesrgan-x4plus-anime`。
 
 服务器示例：
 
 ```env
 REALESRGAN_MODEL_PATH=/root/xinglin-data/chat/weights
-REALESRGAN_MODEL_NAME=realesr-general-x4v3.pth
+REALESRGAN_MODEL_NAME=realesr-general-x4v3
 REALESRGAN_DENOISE_STRENGTH=0.35
+REALESRGAN_OUTSCALE=0
+REALESRGAN_TILE=512
+REALESRGAN_FP32=false
+REALESRGAN_GPU_ID=
 ```
 
 下载地址：
