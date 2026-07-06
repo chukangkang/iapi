@@ -179,12 +179,13 @@ class ImageUpscaleService:
             for _ in range(self.settings.realesrgan_max_passes):
                 with contextlib.redirect_stdout(io.StringIO()):
                     _, _, output = face_enhancer.enhance(
-                        np.array(upscaled),
+                        np.array(upscaled)[:, :, ::-1],
                         has_aligned=False,
                         only_center_face=False,
                         paste_back=True,
+                        weight=self.settings.realesrgan_face_enhance_weight,
                     )
-                upscaled = Image.fromarray(output).convert("RGB")
+                upscaled = Image.fromarray(output[:, :, ::-1]).convert("RGB")
                 if upscaled.width >= width and upscaled.height >= height:
                     break
             return self._fit_to_target(upscaled, width=width, height=height, fit_mode=fit_mode)

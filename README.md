@@ -211,6 +211,8 @@ REALESRGAN_OUTSCALE=0
 REALESRGAN_TILE=512
 REALESRGAN_TILE_PAD=10
 REALESRGAN_PRE_PAD=0
+REALESRGAN_FACE_ENHANCE=false
+REALESRGAN_FACE_ENHANCE_WEIGHT=0.25
 REALESRGAN_FP32=false
 REALESRGAN_GPU_ID=
 REALESRGAN_ALPHA_UPSAMPLER=realesrgan
@@ -286,11 +288,12 @@ REALESRGAN_DENOISE_STRENGTH=0.35
 REALESRGAN_OUTSCALE=0
 REALESRGAN_TILE=512
 REALESRGAN_FACE_ENHANCE=false
+REALESRGAN_FACE_ENHANCE_WEIGHT=0.25
 REALESRGAN_FP32=false
 REALESRGAN_GPU_ID=
 ```
 
-`REALESRGAN_FACE_ENHANCE=true` 会启用 GFPGAN 人脸增强，适合人像修复；也可以在请求中传 `face_enhance=true`，或写进 prompt 参数 `[face_enhance=true]` 临时开启。该参数只影响 `enhance_mode=realesrgan`、`realesrgan_flux`、`qwen_edit_realesrgan`、`qwen_unblur_upscale_realesrgan` 这类 Real-ESRGAN 链路。
+`REALESRGAN_FACE_ENHANCE=true` 会启用 GFPGAN 人脸增强，适合人像修复；也可以在请求中传 `face_enhance=true`，或写进 prompt 参数 `[face_enhance=true]` 临时开启。该参数只影响 `enhance_mode=realesrgan`、`realesrgan_flux`、`qwen_edit_realesrgan`、`qwen_unblur_upscale_realesrgan` 这类 Real-ESRGAN 链路。`REALESRGAN_FACE_ENHANCE_WEIGHT` 控制 GFPGAN 修复强度，默认兼容上游的 `0.5`；想尽量保持原图肤色、眼睛颜色和身份一致性时建议从 `0.25` 开始，仍然变色可降到 `0.15`，脸部修复不足再升到 `0.35`。
 
 下载地址：
 
