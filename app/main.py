@@ -93,9 +93,22 @@ class ImageData(BaseModel):
         return data
 
 
+class ImageInputTokensDetails(BaseModel):
+    text_tokens: int = 0
+    image_tokens: int = 0
+
+
+class ImageUsage(BaseModel):
+    total_tokens: int = 10000
+    input_tokens: int = 5000
+    output_tokens: int = 5000
+    input_tokens_details: ImageInputTokensDetails = Field(default_factory=ImageInputTokensDetails)
+
+
 class ImageResponse(BaseModel):
     created: str
     data: list[ImageData]
+    usage: ImageUsage = Field(default_factory=ImageUsage)
 
 
 class ImageTaskResponse(BaseModel):
