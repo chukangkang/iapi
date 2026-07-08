@@ -108,7 +108,6 @@ class ImageUsage(BaseModel):
 class ImageResponse(BaseModel):
     created: str
     data: list[ImageData]
-    usage: ImageUsage = Field(default_factory=ImageUsage)
 
 
 class ImageTaskResponse(BaseModel):
@@ -118,6 +117,7 @@ class ImageTaskResponse(BaseModel):
     created: str
     updated: str
     url: str
+    usage: ImageUsage = Field(default_factory=ImageUsage)
 
 
 class ImageTaskResultResponse(BaseModel):
