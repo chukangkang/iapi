@@ -61,11 +61,16 @@ class QwenImageEditService:
         )
 
     async def prepare(self, *, lora_path: Optional[str] = None, lora_weight_name: Optional[str] = None) -> None:
-        await asyncio.to_thread(self._prepare_sync, lora_path=lora_path, lora_weight_name=lora_weight_name)
+        await asyncio.to_thread(
+            self._prepare_sync,
+            lora_path=lora_path,
+            lora_weight_name=lora_weight_name,
+            lora_scale=self.settings.qwen_unblur_upscale_lora_scale,
+        )
 
-    def _prepare_sync(self, *, lora_path: Optional[str], lora_weight_name: Optional[str]) -> None:
+    def _prepare_sync(self, *, lora_path: Optional[str], lora_weight_name: Optional[str], lora_scale: float) -> None:
         pipe = self._get_pipeline()
-        self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name)
+        self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name, lora_scale=lora_scale)
 
     def _edit_sync(
         self,
@@ -86,7 +91,7 @@ class QwenImageEditService:
         import torch
 
         pipe = self._get_pipeline()
-        adapter_name = self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name)
+        adapter_name = self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name, lora_scale=lora_scale)
         signature = inspect.signature(pipe.__call__).parameters
         kwargs = {
             "prompt": prompt,
@@ -114,7 +119,7 @@ class QwenImageEditService:
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
 
-    def _ensure_lora(self, pipe, *, lora_path: Optional[str], lora_weight_name: Optional[str]) -> Optional[str]:
+    def _ensure_lora(self, pipe, *, lora_path: Optional[str], lora_weight_name: Optional[str], lora_scale: float) -> Optional[str]:
         if not lora_path:
             if hasattr(pipe, "disable_lora"):
                 pipe.disable_lora()
