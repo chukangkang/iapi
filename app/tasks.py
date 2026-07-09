@@ -42,6 +42,7 @@ def check_gpu_memory() -> dict:
     """检查GPU显存使用情况"""
     try:
         import subprocess
+        visible_physical_devices = _visible_cuda_physical_devices()
         result = subprocess.run(
             ['nvidia-smi', '--query-gpu=memory.used,memory.total,utilization.gpu,power.draw,power.limit', '--format=csv,noheader,nounits'],
             capture_output=True,
@@ -51,13 +52,17 @@ def check_gpu_memory() -> dict:
         if result.returncode == 0 and result.stdout.strip():
             gpus = []
             for index, line in enumerate(result.stdout.strip().splitlines()):
+                if visible_physical_devices is not None and index not in visible_physical_devices:
+                    continue
                 parts = line.split(',')
                 if len(parts) < 2:
                     continue
                 used_mb = float(parts[0].strip())
                 total_mb = float(parts[1].strip())
+                logical_index = visible_physical_devices.index(index) if visible_physical_devices is not None else index
                 gpus.append({
                     "index": index,
+                    "logical_index": logical_index,
                     "used_mb": used_mb,
                     "total_mb": total_mb,
                     "used_percent": (used_mb / total_mb * 100) if total_mb > 0 else 0,
@@ -78,6 +83,23 @@ def check_gpu_memory() -> dict:
     except Exception as e:
         logger.debug(f"Failed to check GPU memory: {e}")
     return None
+
+
+def _visible_cuda_physical_devices() -> Optional[list[int]]:
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible_devices or visible_devices.lower() in {"none", "void", "-1"}:
+        return None
+    devices: list[int] = []
+    for value in visible_devices.split(','):
+        value = value.strip()
+        if not value:
+            continue
+        try:
+            devices.append(int(value))
+        except ValueError:
+            logger.debug("CUDA_VISIBLE_DEVICES contains non-numeric device id '%s'; GPU log filtering disabled", value)
+            return None
+    return devices or None
 
 
 def check_process_health() -> dict:
@@ -138,9 +160,9 @@ class ImageTaskManager:
                 )
                 for gpu in gpu_info.get("gpus", []):
                     logger.info(
-                        "Worker %s/%s task %s %s: GPU%s used=%.1f/%.1f MB (%.1f%%), util=%s",
+                        "Worker %s/%s task %s %s: GPU%s(logical cuda:%s) used=%.1f/%.1f MB (%.1f%%), util=%s",
                         self.settings.resolved_worker_name, worker_id, task_id, phase,
-                        gpu["index"], gpu["used_mb"], gpu["total_mb"], gpu["used_percent"],
+                        gpu["index"], gpu.get("logical_index", gpu["index"]), gpu["used_mb"], gpu["total_mb"], gpu["used_percent"],
                         gpu["utilization"]
                     )
             

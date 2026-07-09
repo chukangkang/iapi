@@ -353,11 +353,29 @@ class QwenImageService:
                 continue
             if getattr(component, "hf_device_map", None):
                 continue
+            target_device = self._least_used_cuda_device(torch)
             try:
-                component.to(self._device)
-                logger.info("Moved Qwen Image component '%s' to %s", name, self._device)
+                component.to(target_device)
+                logger.info("Moved Qwen Image component '%s' to %s", name, target_device)
             except Exception as exc:
-                logger.debug("Failed to move Qwen Image component '%s' to %s: %s", name, self._device, exc)
+                logger.debug("Failed to move Qwen Image component '%s' to %s: %s", name, target_device, exc)
+
+    def _least_used_cuda_device(self, torch: Any) -> str:
+        if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
+            return self._device
+        device_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
+        if device_count <= 1:
+            return self._device
+        memory_by_device: list[tuple[int, int]] = []
+        for index in range(device_count):
+            try:
+                memory_by_device.append((torch.cuda.memory_allocated(index), index))
+            except Exception as exc:
+                logger.debug("Failed to read allocated memory for cuda:%s: %s", index, exc)
+        if not memory_by_device:
+            return self._device
+        _, device_index = min(memory_by_device)
+        return f"cuda:{device_index}"
 
     def _log_device_map(self, pipe: Any) -> None:
         pipeline_device_map = getattr(pipe, "hf_device_map", None)
