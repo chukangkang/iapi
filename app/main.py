@@ -563,7 +563,7 @@ async def _run_image_request(
         generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
         qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
-        qwen_prompt = prompt
+        qwen_prompt = app_settings.qwen_unblur_upscale_trigger_prompt.strip() if is_unblur_upscale and app_settings.qwen_unblur_upscale_trigger_prompt.strip() else prompt
         metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
         if not payload.enhance_mode and _is_qwen_image_model(payload.model, app_settings):
             metadata["qwen_image_i2i_fallback"] = "qwen_edit"
