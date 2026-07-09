@@ -129,9 +129,11 @@ class QwenImageEditService:
                 kwargs["weight_name"] = lora_weight_name
             pipe.load_lora_weights(lora_path, **kwargs)
         if self._active_adapter == adapter_name:
+            if hasattr(pipe, "set_adapters"):
+                pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
             return adapter_name
         if hasattr(pipe, "set_adapters"):
-            pipe.set_adapters([adapter_name])
+            pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
         elif hasattr(pipe, "enable_lora"):
             pipe.enable_lora()
         self._active_adapter = adapter_name
@@ -180,7 +182,14 @@ class QwenImageEditService:
         elif self.settings.qwen_edit_multi_gpu_enabled:
             load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
         else:
-            logger.info("Qwen Edit multi-GPU loading disabled; loading on single device: %s", self._device)
+            if self._device.startswith("cuda") and self.settings.qwen_edit_device_map in {"cuda", "cpu"}:
+                load_kwargs["device_map"] = self.settings.qwen_edit_device_map
+            logger.info(
+                "Qwen Edit multi-GPU loading disabled; loading with %s on device_map=%s device=%s",
+                self.settings.qwen_edit_pipeline_class,
+                load_kwargs.get("device_map"),
+                self._device,
+            )
 
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **load_kwargs)
         cpu_offload_enabled = False

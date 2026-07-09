@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     qwen_image_turbo_scheduler_use_dynamic_shifting: bool = True
     qwen_image_turbo_scheduler_shift_terminal: float = 0.7155
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
-    qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
+    qwen_edit_pipeline_class: str = "DiffusionPipeline"
     qwen_edit_steps: int = Field(default=10, ge=1)
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
     qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     qwen_edit_input_fit_mode: Literal["contain", "cover"] = "contain"
     qwen_edit_background_color: str = "#000000"
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"
-    qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "balanced"
+    qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "cuda"
     qwen_edit_multi_gpu_enabled: bool = True
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
