@@ -291,6 +291,10 @@ class QwenImageService:
         pipeline_load_kwargs = load_kwargs.copy()
         if transformer_sharded:
             pipeline_load_kwargs["transformer"] = transformer
+            remaining_max_memory = self._remaining_cuda_max_memory(torch)
+            if remaining_max_memory:
+                pipeline_load_kwargs["max_memory"] = remaining_max_memory
+                logger.info("Adjusted Qwen Image pipeline max_memory after transformer load: %s", remaining_max_memory)
         if self._looks_like_single_file(model_path) and hasattr(pipeline_cls, "from_single_file"):
             pipe = pipeline_cls.from_single_file(model_path, **pipeline_load_kwargs)
         else:
@@ -341,6 +345,23 @@ class QwenImageService:
         if device_map:
             logger.info("Qwen Image transformer device map: %s", device_map)
         return transformer
+
+    def _remaining_cuda_max_memory(self, torch: Any) -> dict[int, str]:
+        if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
+            return {}
+        device_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
+        max_memory: dict[int, str] = {}
+        for index in range(device_count):
+            try:
+                with torch.cuda.device(index):
+                    free_bytes, _ = torch.cuda.mem_get_info()
+                # 给加载期 allocator warmup、临时张量和非 PyTorch 显存留余量。
+                free_gib = max(1, int(free_bytes // (1024**3)) - 2)
+                max_memory[index] = f"{free_gib}GiB"
+            except Exception as exc:
+                logger.debug("Failed to read remaining CUDA memory for cuda:%s: %s", index, exc)
+                return {}
+        return max_memory
 
     def _move_unsharded_components_to_device(self, pipe: Any, torch: Any) -> None:
         components = getattr(pipe, "components", {}) or {}
