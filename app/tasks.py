@@ -49,17 +49,31 @@ def check_gpu_memory() -> dict:
             timeout=5
         )
         if result.returncode == 0 and result.stdout.strip():
-            parts = result.stdout.strip().split(',')
-            if len(parts) >= 2:
+            gpus = []
+            for index, line in enumerate(result.stdout.strip().splitlines()):
+                parts = line.split(',')
+                if len(parts) < 2:
+                    continue
                 used_mb = float(parts[0].strip())
                 total_mb = float(parts[1].strip())
-                return {
+                gpus.append({
+                    "index": index,
                     "used_mb": used_mb,
                     "total_mb": total_mb,
                     "used_percent": (used_mb / total_mb * 100) if total_mb > 0 else 0,
                     "utilization": parts[2].strip() if len(parts) > 2 else "N/A",
                     "power_draw": parts[3].strip() if len(parts) > 3 else "N/A",
                     "power_limit": parts[4].strip() if len(parts) > 4 else "N/A"
+                })
+            if gpus:
+                used_mb = sum(gpu["used_mb"] for gpu in gpus)
+                total_mb = sum(gpu["total_mb"] for gpu in gpus)
+                return {
+                    "used_mb": used_mb,
+                    "total_mb": total_mb,
+                    "used_percent": (used_mb / total_mb * 100) if total_mb > 0 else 0,
+                    "utilization": "/".join(str(gpu["utilization"]) for gpu in gpus),
+                    "gpus": gpus,
                 }
     except Exception as e:
         logger.debug(f"Failed to check GPU memory: {e}")
@@ -117,11 +131,18 @@ class ImageTaskManager:
             
             if gpu_info:
                 logger.info(
-                    "Worker %s/%s task %s %s: GPU used=%.1f/%.1f MB (%.1f%%), util=%s",
+                    "Worker %s/%s task %s %s: GPUs used=%.1f/%.1f MB (%.1f%%), util=%s",
                     self.settings.resolved_worker_name, worker_id, task_id, phase,
                     gpu_info["used_mb"], gpu_info["total_mb"], gpu_info["used_percent"],
                     gpu_info["utilization"]
                 )
+                for gpu in gpu_info.get("gpus", []):
+                    logger.info(
+                        "Worker %s/%s task %s %s: GPU%s used=%.1f/%.1f MB (%.1f%%), util=%s",
+                        self.settings.resolved_worker_name, worker_id, task_id, phase,
+                        gpu["index"], gpu["used_mb"], gpu["total_mb"], gpu["used_percent"],
+                        gpu["utilization"]
+                    )
             
             if proc_info and "error" not in proc_info:
                 logger.debug(

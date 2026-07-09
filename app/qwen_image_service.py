@@ -4,7 +4,7 @@ import inspect
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from PIL import Image, ImageOps
 
@@ -268,9 +268,9 @@ class QwenImageService:
 
         _model_manager.unload_except(current_model)
 
-        from diffusers import DiffusionPipeline
+        import diffusers
 
-        pipeline_cls = DiffusionPipeline
+        pipeline_cls = diffusers.DiffusionPipeline
         self._device = self._resolve_device(torch)
         self._dtype = self._resolve_dtype(torch)
 
@@ -280,21 +280,35 @@ class QwenImageService:
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
         load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
+        device_map_enabled = uses_pipeline_device_map(load_kwargs)
+        transformer_sharded = False
+        transformer = None
+        if device_map_enabled:
+            transformer = self._load_sharded_transformer(diffusers, torch, load_kwargs)
+            transformer_sharded = transformer is not None
 
         model_path = self.settings.qwen_image_model_path
+        pipeline_load_kwargs = load_kwargs.copy()
+        if transformer_sharded:
+            pipeline_load_kwargs.pop("device_map", None)
+            pipeline_load_kwargs.pop("max_memory", None)
+            pipeline_load_kwargs["transformer"] = transformer
         if self._looks_like_single_file(model_path) and hasattr(pipeline_cls, "from_single_file"):
-            pipe = pipeline_cls.from_single_file(model_path, **load_kwargs)
+            pipe = pipeline_cls.from_single_file(model_path, **pipeline_load_kwargs)
         else:
-            pipe = pipeline_cls.from_pretrained(model_path, **load_kwargs)
+            pipe = pipeline_cls.from_pretrained(model_path, **pipeline_load_kwargs)
 
-        device_map_enabled = uses_pipeline_device_map(load_kwargs)
+        device_map_enabled = device_map_enabled or transformer_sharded
         cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
         if not cpu_offload_enabled:
             if not device_map_enabled:
                 pipe.to(self._device)
+            elif transformer_sharded:
+                self._move_unsharded_components_to_device(pipe, torch)
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
+        self._log_device_map(pipe)
 
         self._pipe = pipe
         self._model_name = current_model
@@ -305,6 +319,54 @@ class QwenImageService:
         _model_manager.activate_model(self._model_name)
         
         return pipe
+
+    def _load_sharded_transformer(self, diffusers: Any, torch: Any, load_kwargs: dict[str, Any]) -> Optional[Any]:
+        transformer_cls = getattr(diffusers, "QwenImageTransformer2DModel", None)
+        if transformer_cls is None:
+            logger.warning("QwenImageTransformer2DModel is unavailable; falling back to pipeline-level device_map")
+            return None
+        if self._looks_like_single_file(self.settings.qwen_image_model_path):
+            logger.warning("Single-file Qwen Image model cannot load transformer subfolder separately; falling back to pipeline-level device_map")
+            return None
+
+        transformer_kwargs = load_kwargs.copy()
+        transformer_kwargs["device_map"] = transformer_kwargs.get("device_map", "balanced")
+        logger.info(
+            "Loading Qwen Image transformer with layer-level multi-GPU sharding: device_map=%s max_memory=%s",
+            transformer_kwargs.get("device_map"),
+            transformer_kwargs.get("max_memory"),
+        )
+        transformer = transformer_cls.from_pretrained(
+            self.settings.qwen_image_model_path,
+            subfolder="transformer",
+            **transformer_kwargs,
+        )
+        device_map = getattr(transformer, "hf_device_map", None)
+        if device_map:
+            logger.info("Qwen Image transformer device map: %s", device_map)
+        return transformer
+
+    def _move_unsharded_components_to_device(self, pipe: Any, torch: Any) -> None:
+        components = getattr(pipe, "components", {}) or {}
+        for name, component in components.items():
+            if not isinstance(component, torch.nn.Module):
+                continue
+            if getattr(component, "hf_device_map", None):
+                continue
+            try:
+                component.to(self._device)
+                logger.info("Moved Qwen Image component '%s' to %s", name, self._device)
+            except Exception as exc:
+                logger.debug("Failed to move Qwen Image component '%s' to %s: %s", name, self._device, exc)
+
+    def _log_device_map(self, pipe: Any) -> None:
+        pipeline_device_map = getattr(pipe, "hf_device_map", None)
+        if pipeline_device_map:
+            logger.info("Qwen Image pipeline device map: %s", pipeline_device_map)
+        transformer = getattr(pipe, "transformer", None)
+        transformer_device_map = getattr(transformer, "hf_device_map", None)
+        if transformer_device_map:
+            logger.info("Qwen Image transformer device map: %s", transformer_device_map)
     
     def _get_model_name(self) -> str:
         """获取当前模型名称"""
