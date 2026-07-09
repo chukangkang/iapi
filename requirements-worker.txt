@@ -5,6 +5,7 @@ torchvision==0.23.0+cu128
 torchaudio==2.8.0+cu128
 accelerate>=0.34.0
 transformers>=4.45.0
+peft>=0.13.0
 bitsandbytes>=0.43.3; platform_system == "Linux"
 cython
 pydantic
