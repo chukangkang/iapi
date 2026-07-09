@@ -1,4 +1,5 @@
 from functools import lru_cache
+import math
 import os
 from pathlib import Path
 import socket
@@ -32,6 +33,16 @@ class Settings(BaseSettings):
     qwen_image_model_path: str = "Qwen/Qwen-Image-2512"
     qwen_image_steps: int = Field(default=50, ge=1)
     qwen_image_true_cfg_scale: float = Field(default=4.0, ge=0.0)
+    qwen_image_turbo_lora_enabled: bool = False
+    qwen_image_turbo_lora_path: str = "Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps"
+    qwen_image_turbo_lora_weight_name: str = "Wuli-Qwen-Image-2512-Turbo-LoRA-2steps-V1.0-bf16.safetensors"
+    qwen_image_turbo_lora_scale: float = Field(default=1.0, ge=0.0)
+    qwen_image_turbo_lora_fuse: bool = True
+    qwen_image_turbo_steps: int = Field(default=2, ge=1)
+    qwen_image_turbo_true_cfg_scale: float = Field(default=1.0, ge=0.0)
+    qwen_image_turbo_scheduler_exponential_shift_mu: float = Field(default=math.log(2.5))
+    qwen_image_turbo_scheduler_use_dynamic_shifting: bool = True
+    qwen_image_turbo_scheduler_shift_terminal: float = 0.7155
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
     qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
     qwen_edit_steps: int = Field(default=10, ge=1)

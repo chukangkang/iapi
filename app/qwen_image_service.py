@@ -9,7 +9,7 @@ from typing import Any, Optional
 from PIL import Image, ImageOps
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings, get_pipeline_device_map_kwargs, uses_pipeline_device_map
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings, get_pipeline_device_map_kwargs, get_remaining_cuda_max_memory, uses_pipeline_device_map
 
 
 logger = logging.getLogger(__name__)
@@ -163,6 +163,7 @@ class QwenImageService:
         self._dtype = None
         self._model_name = "qwen_image_2512"
         self._cpu_offload_enabled = False
+        self._turbo_lora_active = False
 
     async def generate(
         self,
@@ -208,7 +209,7 @@ class QwenImageService:
             "prompt": prompt,
             "height": height,
             "width": width,
-            "num_inference_steps": num_inference_steps,
+            "num_inference_steps": self._effective_num_inference_steps(num_inference_steps),
         }
         if image is not None:
             image_argument = self._image_argument_name(signature)
@@ -220,7 +221,7 @@ class QwenImageService:
         elif "negative_prompt" in signature:
             kwargs["negative_prompt"] = " "
         if "true_cfg_scale" in signature:
-            kwargs["true_cfg_scale"] = self.settings.qwen_image_true_cfg_scale
+            kwargs["true_cfg_scale"] = self._effective_true_cfg_scale()
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
 
@@ -291,7 +292,7 @@ class QwenImageService:
         pipeline_load_kwargs = load_kwargs.copy()
         if transformer_sharded:
             pipeline_load_kwargs["transformer"] = transformer
-            remaining_max_memory = self._remaining_cuda_max_memory(torch)
+            remaining_max_memory = get_remaining_cuda_max_memory(self.settings, torch, reserve_gib=2)
             if remaining_max_memory:
                 pipeline_load_kwargs["max_memory"] = remaining_max_memory
                 logger.info("Adjusted Qwen Image pipeline max_memory after transformer load: %s", remaining_max_memory)
@@ -306,6 +307,7 @@ class QwenImageService:
             if not device_map_enabled:
                 pipe.to(self._device)
         apply_pipeline_memory_settings(pipe, self.settings)
+        self._apply_turbo_lora(pipe)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
         self._log_device_map(pipe)
@@ -319,6 +321,59 @@ class QwenImageService:
         _model_manager.activate_model(self._model_name)
         
         return pipe
+
+    def _effective_num_inference_steps(self, requested_steps: int) -> int:
+        if self.settings.qwen_image_turbo_lora_enabled:
+            return self.settings.qwen_image_turbo_steps
+        return requested_steps
+
+    def _effective_true_cfg_scale(self) -> float:
+        if self.settings.qwen_image_turbo_lora_enabled:
+            return self.settings.qwen_image_turbo_true_cfg_scale
+        return self.settings.qwen_image_true_cfg_scale
+
+    def _apply_turbo_lora(self, pipe: Any) -> None:
+        if not self.settings.qwen_image_turbo_lora_enabled or self._turbo_lora_active:
+            return
+        if not hasattr(pipe, "load_lora_weights"):
+            raise RuntimeError("Current DiffusionPipeline does not support load_lora_weights for Qwen Image Turbo LoRA.")
+
+        logger.info(
+            "Loading Qwen Image Turbo LoRA: path=%s weight=%s scale=%s fuse=%s",
+            self.settings.qwen_image_turbo_lora_path,
+            self.settings.qwen_image_turbo_lora_weight_name,
+            self.settings.qwen_image_turbo_lora_scale,
+            self.settings.qwen_image_turbo_lora_fuse,
+        )
+        pipe.load_lora_weights(
+            self.settings.qwen_image_turbo_lora_path,
+            weight_name=self.settings.qwen_image_turbo_lora_weight_name,
+            adapter_name="qwen_image_turbo_2steps",
+        )
+        if hasattr(pipe, "set_adapters"):
+            pipe.set_adapters(["qwen_image_turbo_2steps"], adapter_weights=[self.settings.qwen_image_turbo_lora_scale])
+        if self.settings.qwen_image_turbo_lora_fuse and hasattr(pipe, "fuse_lora"):
+            pipe.fuse_lora(adapter_names=["qwen_image_turbo_2steps"], lora_scale=self.settings.qwen_image_turbo_lora_scale)
+            if hasattr(pipe, "unload_lora_weights"):
+                pipe.unload_lora_weights()
+        self._apply_turbo_scheduler_config(pipe)
+        self._turbo_lora_active = True
+
+    def _apply_turbo_scheduler_config(self, pipe: Any) -> None:
+        scheduler = getattr(pipe, "scheduler", None)
+        if scheduler is None:
+            logger.warning("Qwen Image Turbo LoRA scheduler config skipped: pipeline has no scheduler")
+            return
+        scheduler_kwargs = {
+            "exponential_shift_mu": self.settings.qwen_image_turbo_scheduler_exponential_shift_mu,
+            "use_dynamic_shifting": self.settings.qwen_image_turbo_scheduler_use_dynamic_shifting,
+            "shift_terminal": self.settings.qwen_image_turbo_scheduler_shift_terminal,
+        }
+        try:
+            pipe.scheduler = scheduler.__class__.from_config(scheduler.config, **scheduler_kwargs)
+            logger.info("Applied Qwen Image Turbo scheduler config: %s", scheduler_kwargs)
+        except Exception as exc:
+            logger.warning("Failed to apply Qwen Image Turbo scheduler config: %s", exc)
 
     def _load_sharded_transformer(self, diffusers: Any, torch: Any, load_kwargs: dict[str, Any]) -> Optional[Any]:
         transformer_cls = getattr(diffusers, "QwenImageTransformer2DModel", None)
@@ -345,23 +400,6 @@ class QwenImageService:
         if device_map:
             logger.info("Qwen Image transformer device map: %s", device_map)
         return transformer
-
-    def _remaining_cuda_max_memory(self, torch: Any) -> dict[int, str]:
-        if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
-            return {}
-        device_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
-        max_memory: dict[int, str] = {}
-        for index in range(device_count):
-            try:
-                with torch.cuda.device(index):
-                    free_bytes, _ = torch.cuda.mem_get_info()
-                # 给加载期 allocator warmup、临时张量和非 PyTorch 显存留余量。
-                free_gib = max(1, int(free_bytes // (1024**3)) - 2)
-                max_memory[index] = f"{free_gib}GiB"
-            except Exception as exc:
-                logger.debug("Failed to read remaining CUDA memory for cuda:%s: %s", index, exc)
-                return {}
-        return max_memory
 
     def _move_unsharded_components_to_device(self, pipe: Any, torch: Any) -> None:
         components = getattr(pipe, "components", {}) or {}
@@ -434,6 +472,7 @@ class QwenImageService:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
             self._cpu_offload_enabled = False
+            self._turbo_lora_active = False
             _model_manager.unregister_model(self._model_name)
             _model_manager._release_torch_memory()
 

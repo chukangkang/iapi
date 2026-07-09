@@ -192,6 +192,7 @@ class QwenImageEditService:
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
+        self._log_device_map(pipe)
 
         self._pipe = pipe
         self._model_name = current_model
@@ -291,3 +292,13 @@ class QwenImageEditService:
 
     def _has_device_map(self) -> bool:
         return bool(getattr(self._pipe, "hf_device_map", None))
+
+    def _log_device_map(self, pipe) -> None:
+        pipeline_device_map = getattr(pipe, "hf_device_map", None)
+        if pipeline_device_map:
+            logger.info("Qwen Edit pipeline device map: %s", pipeline_device_map)
+        components = getattr(pipe, "components", {}) or {}
+        for name, component in components.items():
+            component_device_map = getattr(component, "hf_device_map", None)
+            if component_device_map:
+                logger.info("Qwen Edit component '%s' device map: %s", name, component_device_map)

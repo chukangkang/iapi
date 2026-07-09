@@ -63,6 +63,10 @@ def _device_map_max_memory(settings: Settings, torch: Any, gpu_count: int) -> di
     if settings.model_gpu_memory_limit:
         return {index: settings.model_gpu_memory_limit for index in range(gpu_count)}
 
+    remaining_max_memory = get_remaining_cuda_max_memory(settings, torch, reserve_gib=2)
+    if remaining_max_memory:
+        return remaining_max_memory
+
     max_memory: dict[int, str] = {}
     for index in range(gpu_count):
         try:
@@ -72,6 +76,33 @@ def _device_map_max_memory(settings: Settings, torch: Any, gpu_count: int) -> di
             return {}
         if total_gib > 0:
             max_memory[index] = f"{total_gib}GiB"
+    return max_memory
+
+
+def get_remaining_cuda_max_memory(settings: Settings, torch: Any, reserve_gib: int = 2) -> dict[int, str]:
+    try:
+        if not torch.cuda.is_available():
+            return {}
+    except Exception as exc:
+        logger.debug("Failed to query CUDA availability: %s", exc)
+        return {}
+
+    available_gpu_count = torch.cuda.device_count()
+    gpu_count = min(settings.model_gpu_count, available_gpu_count, 4)
+    if gpu_count <= 0:
+        return {}
+
+    max_memory: dict[int, str] = {}
+    for index in range(gpu_count):
+        try:
+            with torch.cuda.device(index):
+                free_bytes, _ = torch.cuda.mem_get_info()
+            # 按当前剩余显存给 device_map 上限，避免前一阶段已占显存后仍按总显存继续塞到同一张卡。
+            free_gib = max(1, int(free_bytes // (1024**3)) - reserve_gib)
+            max_memory[index] = f"{free_gib}GiB"
+        except Exception as exc:
+            logger.debug("Failed to read remaining CUDA memory for cuda:%s: %s", index, exc)
+            return {}
     return max_memory
 
 
