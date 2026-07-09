@@ -1,6 +1,6 @@
-# FLUX.2 Klein KV OpenAI Image API
+# Qwen Image OpenAI API
 
-一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`，也支持通过 `model=qwen-image-2512` 默认切换到官方 Qwen Image 2512 `DiffusionPipeline` 文生图；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
+一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用官方 Qwen Image 2512 `DiffusionPipeline` 文生图；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
 
 ## 接口
 
@@ -28,14 +28,13 @@
 | --- | --- | --- |
 | `prompt` | 提示词，必填 | - |
 | `negative_prompt` | 反向词；仅使用请求中显式传入的值，底层 pipeline 支持时生效 | `null` |
-| `image` | 可选参考图；存在时走 i2i/KV cache 流程 | `null` |
+| `image` | 可选参考图；存在时走图生图/编辑流程 | `null` |
 | `aspect_ratio` | generations 使用 Qwen Image 2512 标准比例；edits 可搭配 `resolution=2k/4k` 输出高清尺寸 | `1:1` |
 | `size` / `resolution` | generations 不推荐传；edits 可传 `size=3840x2160` 或 `aspect_ratio=16:9` + `resolution=4k` | `null` |
 | `width` / `height` | generations 不建议传；edits 未传 `aspect_ratio`/`resolution`/`size` 时可作为输出尺寸兜底 | `.env` 默认值 |
-| `num_inference_steps` | 推理步数 | `4` |
+| `num_inference_steps` | 推理步数 | `50` |
 | `response_format` | `url` 或 `b64_json` | `url` |
-| `enhance_mode` | 高清/保真模式：`flux`、`qwen_image`、`pixel`、`realesrgan`、`realesrgan_flux`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
-| `flux_refine_strength` | 图生图时传给 FLUX 的低重绘强度；pipeline 不支持时会自动忽略 | `0.08` |
+| `enhance_mode` | 高清/保真模式：`qwen_image`、`pixel`、`realesrgan`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
 | `n` | 当前仅支持 `1` | `1` |
 
 单图图生图示例：
@@ -69,7 +68,7 @@
 
 - `prompt`：必填
 - `image`：必填，JSON 中可传图片 URL/base64，multipart 中可传文件
-- `mask`：可选；当前接口会接收但 FLUX.2 Klein KV 示例未使用 mask，因此暂不参与推理
+- `mask`：可选；当前接口会接收但暂不参与推理
 - 其他参数同 generations
 
 ### `POST /v1/chat/completions`
@@ -82,7 +81,7 @@
 
 ## 主流比例
 
-`/v1/images/generations` 默认使用 `aspect_ratio` 请求 Qwen Image 2512 标准尺寸。FLUX 和 Qwen 2512 的生图路径共用同一套固定输出尺寸，不再使用 `resolution=2k/4k`，也不再按 `MAX_GENERATION_PIXELS` 缩小后二次放大。
+`/v1/images/generations` 默认使用 `aspect_ratio` 请求 Qwen Image 2512 标准尺寸，不再使用 `resolution=2k/4k`，也不再按 `MAX_GENERATION_PIXELS` 缩小后二次放大。
 
 | 场景 | `aspect_ratio` | 输出尺寸 |
 | --- | --- | --- |
@@ -94,11 +93,11 @@
 | 横版摄影/封面 | `3:2` | `1584x1056` |
 | 竖版摄影/封面 | `2:3` | `1056x1584` |
 
-对 `/v1/images/generations` 来说，`size`、`resolution` 和请求里的 `seed` 不再是推荐调用参数；`seed` 未传时默认使用 `0`，生成尺寸由 `aspect_ratio` 唯一决定。`/v1/images/edits` 仍保留 `resolution=4k`、`size=3840x2160` 等高清超分输出能力。
+对 `/v1/images/generations` 来说，`size` 和 `resolution` 不再是推荐调用参数；`seed` 未传时默认使用 `None`，生成尺寸由 `aspect_ratio` 唯一决定。`/v1/images/edits` 仍保留 `resolution=4k`、`size=3840x2160` 等高清超分输出能力。
 
 `/v1/images/edits` 只传 `resolution=2k/4k` 且不传 `aspect_ratio` 时，会按原图宽高比计算目标尺寸：`4k` 表示原图长边放到 `4096`，`2k` 表示原图长边放到 `2560`，另一边按原比例取 16 的倍数。这样高清修复默认保持原图尺寸比例，不会裁剪；只有显式传 `aspect_ratio` 时才会使用上表预设比例。
 
-如果目标是视频高清、海报高清、字幕/商品图文字保真，建议不要用默认 FLUX 重绘，而是使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
+如果目标是视频高清、海报高清、字幕/商品图文字保真，建议使用 `enhance_mode=pixel` 或 `enhance_mode=realesrgan`。
 
 ## 安装
 
@@ -133,12 +132,12 @@ pip install -r requirements.txt
 如果模型需要 Hugging Face 访问权限，请编辑 `.env`：
 
 ```env
-MODEL_NAME=flux-image-backend
+MODEL_NAME=qwen-image-2512
 HF_TOKEN=你的 HuggingFace Token
 TOKENIZERS_PARALLELISM=false
 ```
 
-`MODEL_NAME` 是专门返回给 New API / OpenAI 兼容测试的模型名，默认 `flux-image-backend`；实际加载的 Hugging Face 模型仍由 `MODEL_PATH` 控制。
+`MODEL_NAME` 是专门返回给 New API / OpenAI 兼容测试的模型名，默认 `qwen-image-2512`；实际 Qwen Image 2512 模型由 `QWEN_IMAGE_MODEL_PATH` 控制。
 
 `TOKENIZERS_PARALLELISM=false` 用于关闭 Hugging Face `tokenizers` 在多进程/fork 场景下的并行 warning，不影响图片生成结果。
 
@@ -148,7 +147,6 @@ TOKENIZERS_PARALLELISM=false
 
 | 用途 | 配置项 | 默认值 / 文件名 | 下载地址 | 是否必需 |
 | --- | --- | --- | --- | --- |
-| FLUX 文生图/图生图基座 | `MODEL_PATH` | `black-forest-labs/FLUX.2-klein-9b-kv` | https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv | 使用 `flux` / 默认生成时必需 |
 | Qwen Image 2512 文生图基座 | `QWEN_IMAGE_MODEL_PATH` | `Qwen/Qwen-Image-2512` | https://huggingface.co/Qwen/Qwen-Image-2512 | 使用 `qwen_image` 或 `model=qwen-image-2512` 时必需 |
 | Qwen 图片编辑基座 | `QWEN_EDIT_MODEL_PATH` | `Qwen/Qwen-Image-Edit-2511` | https://huggingface.co/Qwen/Qwen-Image-Edit-2511 | 使用 `qwen_edit*` / `qwen_unblur_upscale*` 时必需 |
 | Qwen 去模糊高清 LoRA | `QWEN_UNBLUR_UPSCALE_LORA_PATH` | `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale | 使用 `qwen_unblur_upscale*` 时必需 |
@@ -163,9 +161,8 @@ Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动
 `.env` 可配置：
 
 ```env
-DEFAULT_ENHANCE_MODE=flux
+DEFAULT_ENHANCE_MODE=qwen_image
 RESPONSE_METADATA_ENABLED=true
-FLUX_REFINE_STRENGTH=0.08
 MODEL_GPU_COUNT=1
 MODEL_GPU_MEMORY_LIMIT=
 QWEN_IMAGE_MODEL_NAME=qwen-image-2512
@@ -194,7 +191,7 @@ PIXEL_SHARPEN_PERCENT=80
 PIXEL_SHARPEN_THRESHOLD=8
 UPSCALE_FIT_MODE=contain
 UPSCALE_FILL_COLOR=black
-# Optional for enhance_mode=realesrgan, realesrgan_flux, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.
+# Optional for enhance_mode=realesrgan, qwen_edit_realesrgan, qwen_unblur_upscale_realesrgan.
 # Empty means project ./weights; you can also set a directory or a concrete .pth file.
 REALESRGAN_MODEL_PATH=
 REALESRGAN_MODEL_NAME=realesr-general-x4v3
@@ -215,7 +212,7 @@ REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 
 `RESPONSE_METADATA_ENABLED=true` 会在图片响应中返回调试用 `metadata`；生产线上可设为 `false`，响应将不包含 `metadata` 字段。
 
-`MODEL_GPU_COUNT` 控制 Diffusers 模型加载使用的 GPU 数量，支持 `1` 到 `4`。默认 `1` 保持单卡加载；设置为 `2`、`3` 或 `4` 且机器有足够 CUDA 设备时，会在加载 FLUX、Qwen Image 2512、Qwen Image Edit 时向 `from_pretrained` 传入 `device_map="balanced"`，把模型分布到多张 GPU。`MODEL_GPU_MEMORY_LIMIT` 可选，用于给每张卡设置相同的 `max_memory`，例如 `20GiB`；留空时按各 GPU 总显存自动生成上限。启用多卡 `device_map` 时不会再调用 pipeline `.to(device)` 或 CPU offload，避免和 Diffusers device map 冲突。
+`MODEL_GPU_COUNT` 控制 Diffusers 模型加载使用的 GPU 数量，支持 `1` 到 `4`。默认 `1` 保持单卡加载；设置为 `2`、`3` 或 `4` 且机器有足够 CUDA 设备时，会在加载 Qwen Image 2512、Qwen Image Edit 时向 `from_pretrained` 传入 `device_map="balanced"`，把模型分布到多张 GPU。`MODEL_GPU_MEMORY_LIMIT` 可选，用于给每张卡设置相同的 `max_memory`，例如 `20GiB`；留空时按各 GPU 总显存自动生成上限。启用多卡 `device_map` 时不会再调用 pipeline `.to(device)` 或 CPU offload，避免和 Diffusers device map 冲突。
 
 `enhance_mode` 是独立的处理链路选择参数，显式传入时优先级高于 `model`。`qwen_image` 可通过两种方式启用：请求里传 `model=qwen-image-2512` 且不传 `enhance_mode`，或显式传 `enhance_mode=qwen_image`。前者适合 New API / OpenAI 兼容网关按模型名设置默认链路；后者适合直接调用本服务并明确指定处理模式。也就是说，`model=qwen-image-2512` + `enhance_mode=qwen_unblur_upscale_realesrgan` 会走 Qwen Image Edit 2511 + Unblur/Upscale LoRA + Real-ESRGAN 链路，而不是强制走 2512。`/v1/images/generations` 不传 `image` 时走官方 Qwen Image 2512 `DiffusionPipeline` 文生图；`/v1/images/edits` 或 generations 传 `image` 时默认走 Qwen Image Edit 2511。`QWEN_IMAGE_MODEL_PATH` 默认使用官方 Diffusers 仓库 `Qwen/Qwen-Image-2512`，加载方式等价于 `DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype).to(device)`；默认 `QWEN_IMAGE_STEPS=50`、`QWEN_IMAGE_TRUE_CFG_SCALE=4.0`。
 
@@ -223,11 +220,9 @@ REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 
 | 模式 | 说明 | 文字一致性 |
 | --- | --- | --- |
-| `flux` | FLUX 文生图/图生图；图生图会按 `flux_refine_strength` 低强度参考原图重绘 | 可能改变文字 |
 | `qwen_image` | 官方 Qwen Image 2512 `DiffusionPipeline` 文生图，默认 50 步、`true_cfg_scale=4.0` | 取决于提示词 |
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
-| `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖标准目标尺寸，再缩放到目标尺寸，不进 FLUX | 高 |
-| `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
+| `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖标准目标尺寸，再缩放到目标尺寸，不进扩散模型 | 高 |
 | `qwen_edit` | Python 直接加载 Qwen Image Edit 做高清编辑，再像素放大到目标尺寸 | 中 |
 | `qwen_edit_realesrgan` | Qwen Image Edit 高清编辑后，再用 Real-ESRGAN 输出目标尺寸 | 中高 |
 | `qwen_unblur_upscale` | 加载 `Qwen-Image-Edit-2511-Unblur-Upscale` LoRA 做去模糊/高清增强，再像素放大到目标尺寸 | 中高 |
@@ -239,18 +234,16 @@ REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 | --- | --- | --- | --- |
 | `qwen-image-2512` | 未传 | Qwen Image 2512 | 无输入图时默认走官方 `DiffusionPipeline` 文生图；有输入图时默认走 Qwen Image Edit 2511 |
 | `qwen-image-2512` | `qwen_image` | Qwen Image 2512 | 显式指定 2512 生图/编辑链路，适合希望直接使用 2512 时使用 |
-| `qwen-image-2512` | `flux` | FLUX img2img | `enhance_mode` 优先级高于 `model`，因此会忽略 2512 默认链路，改走 FLUX 参考图重绘 |
 | `qwen-image-2512` | `pixel` | 像素放大/锐化 | 不进入扩散模型，适合最大化保持文字、LOGO 和布局 |
-| `qwen-image-2512` | `realesrgan` | Real-ESRGAN 超分 | 不进入 FLUX/Qwen 扩散模型，使用 Real-ESRGAN 输出目标尺寸 |
-| `qwen-image-2512` | `realesrgan_flux` | Real-ESRGAN → FLUX | 先 Real-ESRGAN 放大，再用 FLUX 低强度细节修复 |
+| `qwen-image-2512` | `realesrgan` | Real-ESRGAN 超分 | 不进入扩散模型，使用 Real-ESRGAN 输出目标尺寸 |
 | `qwen-image-2512` | `qwen_edit` | Qwen Image Edit 2511 → 像素放大 | 走 `QWEN_EDIT_MODEL_PATH` 指定的 2511 编辑基座，不走 2512 |
 | `qwen-image-2512` | `qwen_edit_realesrgan` | Qwen Image Edit 2511 → Real-ESRGAN | 先 2511 编辑修复，再 Real-ESRGAN 输出目标尺寸 |
 | `qwen-image-2512` | `qwen_unblur_upscale` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → 像素放大 | 加载 `QWEN_UNBLUR_UPSCALE_LORA_PATH`，用于去模糊/高清增强 |
 | `qwen-image-2512` | `qwen_unblur_upscale_realesrgan` | Qwen Image Edit 2511 + Unblur/Upscale LoRA → Real-ESRGAN | 先用 2511 + 去模糊 LoRA 修复，再 Real-ESRGAN 输出标准目标尺寸；这是 `model=2512` 搭配该模式时的实际路径 |
-| `flux-image-backend` 或其他模型名 | 未传 | `.env` 的 `DEFAULT_ENHANCE_MODE` | 默认配置通常是 `flux`；后续新增模型也可以通过同一套 `enhance_mode` 复用处理链路 |
-| `flux-image-backend` 或其他模型名 | 任意合法 `enhance_mode` | 对应 `enhance_mode` 链路 | `enhance_mode` 独立于 `model`，只要显式传入就按该模式分流 |
+| 其他模型名 | 未传 | `.env` 的 `DEFAULT_ENHANCE_MODE` | 默认配置是 `qwen_image` |
+| 其他模型名 | 任意合法 `enhance_mode` | 对应 `enhance_mode` 链路 | `enhance_mode` 独立于 `model`，只要显式传入就按该模式分流 |
 
-如果追求“看起来更高清”，可用 `enhance_mode=flux` 直接让 FLUX 参考原图低强度重绘到标准目标尺寸；如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真缩放和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入 FLUX 重绘；`qwen_unblur_upscale`、`flux` 和 `realesrgan_flux` 都会进入修复/扩散模型，没有像素级一致性保证。
+如果严格要求“字体、文字 100% 不变”，优先 `pixel` 或 `realesrgan`。`pixel` 只是保真缩放和锐化，不会凭空生成新纹理；`realesrgan` 是 AI 超分细节增强，且不会进入扩散模型；`qwen_unblur_upscale` 会进入修复/扩散模型，没有像素级一致性保证。
 
 如果想接近 ComfyUI 中 “Qwen Image Edit 低步数修复 + 高清输出” 的效果，不需要调用 ComfyUI 服务，可使用 `enhance_mode=qwen_edit`、`enhance_mode=qwen_edit_realesrgan`、`enhance_mode=qwen_unblur_upscale` 或 `enhance_mode=qwen_unblur_upscale_realesrgan`。服务会在 Python 内部加载 `QWEN_EDIT_PIPELINE_CLASS` 指定的 Diffusers pipeline，先按 `QWEN_EDIT_SCALE_TO_SIDE` / `QWEN_EDIT_SCALE_TO_LENGTH` 计算编辑尺寸，再输出到请求目标尺寸；`resolution=4k` 且未传 `aspect_ratio` 时会保持原图宽高比。
 
@@ -288,7 +281,7 @@ REALESRGAN_FP32=false
 REALESRGAN_GPU_ID=
 ```
 
-`REALESRGAN_FACE_ENHANCE=true` 会启用 GFPGAN 人脸增强，适合人像修复；也可以在请求中传 `face_enhance=true`，或写进 prompt 参数 `[face_enhance=true]` 临时开启。该参数只影响 `enhance_mode=realesrgan`、`realesrgan_flux`、`qwen_edit_realesrgan`、`qwen_unblur_upscale_realesrgan` 这类 Real-ESRGAN 链路。`REALESRGAN_FACE_ENHANCE_WEIGHT` 控制 GFPGAN 修复强度，默认兼容上游的 `0.5`；想尽量保持原图肤色、眼睛颜色和身份一致性时建议从 `0.25` 开始，仍然变色可降到 `0.15`，脸部修复不足再升到 `0.35`。
+`REALESRGAN_FACE_ENHANCE=true` 会启用 GFPGAN 人脸增强，适合人像修复；也可以在请求中传 `face_enhance=true`，或写进 prompt 参数 `[face_enhance=true]` 临时开启。该参数只影响 `enhance_mode=realesrgan`、`qwen_edit_realesrgan`、`qwen_unblur_upscale_realesrgan` 这类 Real-ESRGAN 链路。`REALESRGAN_FACE_ENHANCE_WEIGHT` 控制 GFPGAN 修复强度，默认兼容上游的 `0.5`；想尽量保持原图肤色、眼睛颜色和身份一致性时建议从 `0.25` 开始，仍然变色可降到 `0.15`，脸部修复不足再升到 `0.35`。
 
 下载地址：
 
@@ -450,7 +443,7 @@ curl http://127.0.0.1:8000/health
 New API 里建议这样配置：
 
 - Base URL：`http://127.0.0.1:8000/v1`
-- 模型名：`.env` 里的 `MODEL_NAME`，默认 `flux-image-backend`
+- 模型名：`.env` 里的 `MODEL_NAME`，默认 `qwen-image-2512`
 - Key：当前服务未校验密钥，可填任意非空值用于通过 New API 表单校验
 
 模型列表测试：
@@ -462,7 +455,7 @@ curl http://127.0.0.1:8000/v1/models
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/chat/completions ^
   -H "Content-Type: application/json" ^
-  -d "{\"model\":\"flux-image-backend\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
+  -d "{\"model\":\"qwen-image-2512\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
 ```
 
 流式测试也会返回兼容 SSE：
@@ -470,10 +463,10 @@ curl -X POST http://127.0.0.1:8000/v1/chat/completions ^
 ```bash
 curl -N -X POST http://127.0.0.1:8000/v1/chat/completions ^
   -H "Content-Type: application/json" ^
-  -d "{\"model\":\"flux-image-backend\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
+  -d "{\"model\":\"qwen-image-2512\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}"
 ```
 
-返回内容中的 `model` 字段和 `choices[0].message.content` 会使用 `.env` 中的 `MODEL_NAME`，默认 `flux-image-backend`。
+返回内容中的 `model` 字段和 `choices[0].message.content` 会使用 `.env` 中的 `MODEL_NAME`，默认 `qwen-image-2512`。
 
 ### 文生图 JSON
 
@@ -616,19 +609,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
 | 手机竖图、短视频封面 | `aspect_ratio=9:16`、`resolution=4k` | `2160x3840` |
 | 老照片、证件比例 | `aspect_ratio=4:3`、`resolution=4k` | `4096x3072` |
 
-注意：`enhance_mode=flux` 是基于 FLUX 的 img2img 重绘后输出 4K 尺寸，不是 ESRGAN/Real-ESRGAN 这类纯超分；`enhance_mode=pixel` 保真但不会生成真实高清细节；如果想兼顾清晰度和保真，请配置 Real-ESRGAN 后使用 `enhance_mode=realesrgan`。
-
-如果希望通过 FLUX 直接参考原图重绘成 4K，可以使用：
-
-```bash
-curl -X POST http://127.0.0.1:8000/v1/images/edits ^
-  -F "prompt=Make this image cleaner and sharper in 4K, preserve the original composition, identity and text as much as possible" ^
-  -F "image=@input.png" ^
-  -F "aspect_ratio=16:9" ^
-  -F "resolution=4k" ^
-  -F "enhance_mode=flux" ^
-  -F "flux_refine_strength=0.08"
-```
+注意：`enhance_mode=pixel` 保真但不会生成真实高清细节；如果想兼顾清晰度和保真，请配置 Real-ESRGAN 后使用 `enhance_mode=realesrgan`。
 
 如果希望 `/v1/images/generations` 直接使用官方 Qwen Image 2512 `DiffusionPipeline`，可以使用模型名默认路由，或显式传 `enhance_mode=qwen_image`：
 
@@ -642,8 +623,6 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "resolution=4k" ^
   -F "upscale_fit_mode=cover"
 ```
-
-`flux_refine_strength` 越低越接近原图，越高越清晰但越容易改内容。建议从 `0.05`–`0.12` 试起；如果文字变化明显，降低到 `0.03`–`0.06`。
 
 如果希望用 Python 复刻类似 ComfyUI 工作流的 Qwen Image Edit 高清链路，可以使用：
 

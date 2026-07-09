@@ -18,8 +18,8 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    model_name: str = "flux-image-backend"
-    model_path: str = "black-forest-labs/FLUX.2-klein-9b-kv"
+    model_name: str = "qwen-image-2512"
+    model_path: str = ""
     device: str = "auto"
     torch_dtype: Literal["auto", "float16", "bfloat16", "float32"] = "bfloat16"
     num_inference_steps: int = Field(default=4, ge=1)
@@ -27,8 +27,7 @@ class Settings(BaseSettings):
     default_height: int = Field(default=1328, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
     response_metadata_enabled: bool = True
-    default_enhance_mode: Literal["flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
-    flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
+    default_enhance_mode: Literal["qwen_image", "pixel", "realesrgan", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "qwen_image"
     qwen_image_model_name: str = "qwen-image-2512"
     qwen_image_model_path: str = "Qwen/Qwen-Image-2512"
     qwen_image_steps: int = Field(default=50, ge=1)

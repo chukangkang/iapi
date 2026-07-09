@@ -63,7 +63,6 @@ class ImageGenerationRequest(BaseModel):
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
     face_enhance: Optional[bool] = None
-    flux_refine_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     qwen_edit_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("response_format", mode="before")
@@ -155,28 +154,10 @@ _upscale_service: Optional[Any] = None
 _storage: Optional[ImageStorage] = None
 
 
-def _get_flux_service() -> Any:
-    from app.flux_service import FluxImageService
-
-    global _service, _qwen_image_service, _qwen_edit_service
-    if _qwen_image_service is not None:
-        _qwen_image_service.unload()
-        _qwen_image_service = None
-    if _qwen_edit_service is not None:
-        _qwen_edit_service.unload()
-        _qwen_edit_service = None
-    if _service is None:
-        _service = FluxImageService(settings)
-    return _service
-
-
 def _get_qwen_image_service() -> Any:
     from app.qwen_image_service import QwenImageService
 
-    global _service, _qwen_image_service, _qwen_edit_service
-    if _service is not None:
-        _service.unload()
-        _service = None
+    global _qwen_image_service, _qwen_edit_service
     if _qwen_edit_service is not None:
         _qwen_edit_service.unload()
         _qwen_edit_service = None
@@ -188,10 +169,7 @@ def _get_qwen_image_service() -> Any:
 def _get_qwen_edit_service() -> Any:
     from app.qwen_edit_service import QwenImageEditService
 
-    global _service, _qwen_edit_service, _qwen_image_service
-    if _service is not None:
-        _service.unload()
-        _service = None
+    global _qwen_edit_service, _qwen_image_service
     if _qwen_image_service is not None:
         _qwen_image_service.unload()
         _qwen_image_service = None
@@ -253,7 +231,7 @@ async def lifespan(_: FastAPI):
         await _task_manager.stop()
 
 
-app = FastAPI(title="FLUX.2 Klein KV OpenAI Image API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Qwen Image OpenAI API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -526,7 +504,6 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             enhance_mode=_optional_str(form.get("enhance_mode")),
             upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
             face_enhance=_optional_bool(form.get("face_enhance")),
-            flux_refine_strength=_optional_float(form.get("flux_refine_strength")),
             qwen_edit_strength=_optional_float(form.get("qwen_edit_strength")),
         )
         if reference_image is None:
@@ -577,7 +554,7 @@ async def _run_image_request(
     if enhance_mode == "pixel":
         metadata["pixel_sharpen_enabled"] = app_settings.pixel_sharpen_enabled
         metadata["pixel_sharpen_percent"] = app_settings.pixel_sharpen_percent
-    if enhance_mode in {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}:
+    if enhance_mode in {"realesrgan", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}:
         metadata["realesrgan_max_passes"] = app_settings.realesrgan_max_passes
         metadata["realesrgan_denoise_strength"] = app_settings.realesrgan_denoise_strength
     if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
@@ -626,8 +603,8 @@ async def _run_image_request(
         metadata["output_height"] = image.height
         return _image_response(image, payload, metadata)
 
-    if primary_reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
-        upscale_method = "realesrgan" if enhance_mode in {"realesrgan", "realesrgan_flux"} else "pixel"
+    if primary_reference_image is not None and enhance_mode in {"pixel", "realesrgan"}:
+        upscale_method = "realesrgan" if enhance_mode == "realesrgan" else "pixel"
         image = await _get_upscale_service().upscale(
             primary_reference_image,
             width=output_width,
@@ -636,48 +613,26 @@ async def _run_image_request(
             fit_mode=upscale_fit_mode,
             face_enhance=face_enhance,
         )
-        if enhance_mode != "realesrgan_flux":
-            metadata["output_width"] = image.width
-            metadata["output_height"] = image.height
-            return _image_response(image, payload, metadata)
-
-        reference_image = image
-        primary_reference_image = image
-
-    generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
-    if enhance_mode == "qwen_image":
-        metadata["qwen_image_model_path"] = app_settings.qwen_image_model_path
-        qwen_image_service = _get_qwen_image_service()
-        metadata["qwen_image_steps"] = payload.num_inference_steps or app_settings.qwen_image_steps
-        metadata["qwen_image_true_cfg_scale"] = app_settings.qwen_image_true_cfg_scale
-        metadata["qwen_image_task_type"] = "image_to_image" if primary_reference_image is not None else "text_to_image"
-        metadata["qwen_image_width"] = generation_width
-        metadata["qwen_image_height"] = generation_height
-        image = await qwen_image_service.generate(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            image=primary_reference_image,
-            width=generation_width,
-            height=generation_height,
-            num_inference_steps=payload.num_inference_steps or app_settings.qwen_image_steps,
-            seed=payload.seed,
-        )
-        if image.size != (output_width, output_height):
-            image = image.resize((output_width, output_height))
-
         metadata["output_width"] = image.width
         metadata["output_height"] = image.height
         return _image_response(image, payload, metadata)
 
-    image = await _get_flux_service().generate(
+    generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
+    metadata["qwen_image_model_path"] = app_settings.qwen_image_model_path
+    qwen_image_service = _get_qwen_image_service()
+    metadata["qwen_image_steps"] = payload.num_inference_steps or app_settings.qwen_image_steps
+    metadata["qwen_image_true_cfg_scale"] = app_settings.qwen_image_true_cfg_scale
+    metadata["qwen_image_task_type"] = "image_to_image" if primary_reference_image is not None else "text_to_image"
+    metadata["qwen_image_width"] = generation_width
+    metadata["qwen_image_height"] = generation_height
+    image = await qwen_image_service.generate(
         prompt=prompt,
         negative_prompt=negative_prompt,
         image=primary_reference_image,
         width=generation_width,
         height=generation_height,
-        num_inference_steps=payload.num_inference_steps or app_settings.num_inference_steps,
+        num_inference_steps=payload.num_inference_steps or app_settings.qwen_image_steps,
         seed=payload.seed,
-        strength=(payload.flux_refine_strength or app_settings.flux_refine_strength) if primary_reference_image is not None else None,
     )
     if image.size != (output_width, output_height):
         image = image.resize((output_width, output_height))
@@ -711,18 +666,12 @@ async def _prepare_image_request(
             await _get_upscale_service().prepare(method="realesrgan")
         return
 
-    if enhance_mode == "qwen_image":
-        await _get_qwen_image_service().prepare()
-        return
-
-    if primary_reference_image is not None and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
-        if enhance_mode in {"realesrgan", "realesrgan_flux"}:
+    if primary_reference_image is not None and enhance_mode in {"pixel", "realesrgan"}:
+        if enhance_mode == "realesrgan":
             await _get_upscale_service().prepare(method="realesrgan")
-        if enhance_mode == "realesrgan_flux":
-            await _get_flux_service().prepare()
         return
 
-    await _get_flux_service().prepare()
+    await _get_qwen_image_service().prepare()
 
 
 def _image_request_affinity_key(
@@ -738,13 +687,11 @@ def _image_request_affinity_key(
         return f"qwen_edit:{app_settings.qwen_edit_model_path}:{lora_key}:{upscale_key}"
     if enhance_mode == "qwen_image":
         return f"qwen_image:{app_settings.qwen_image_model_path}"
-    if has_reference_image and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
-        if enhance_mode == "realesrgan_flux":
-            return f"realesrgan_flux:{app_settings.realesrgan_model_path}:{app_settings.realesrgan_model_name}:{app_settings.model_path}"
+    if has_reference_image and enhance_mode in {"pixel", "realesrgan"}:
         if enhance_mode == "realesrgan":
             return f"realesrgan:{app_settings.realesrgan_model_path}:{app_settings.realesrgan_model_name}"
         return "pixel"
-    return f"flux:{app_settings.model_path}"
+    return f"qwen_image:{app_settings.qwen_image_model_path}"
 
 
 def _image_response(image, payload: ImageGenerationRequest, metadata: Optional[dict[str, Any]] = None) -> ImageResponse:
@@ -773,10 +720,10 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if payload.response_format not in {"url", "b64_json"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url', 'b64_json', or 'base64'")
-    if payload.enhance_mode and payload.enhance_mode not in {"flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+    if payload.enhance_mode and payload.enhance_mode not in {"qwen_image", "pixel", "realesrgan", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="enhance_mode must be one of: flux, qwen_image, pixel, realesrgan, realesrgan_flux, qwen_edit, qwen_edit_realesrgan, qwen_unblur_upscale, qwen_unblur_upscale_realesrgan",
+            detail="enhance_mode must be one of: qwen_image, pixel, realesrgan, qwen_edit, qwen_edit_realesrgan, qwen_unblur_upscale, qwen_unblur_upscale_realesrgan",
         )
     if payload.upscale_fit_mode and payload.upscale_fit_mode not in {"stretch", "contain", "cover"}:
         raise HTTPException(
@@ -793,7 +740,7 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image must contain one or two images")
         if len(payload.image) == 2 and _resolve_enhance_mode(payload, app_settings) != "qwen_edit":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Two input images are only supported for qwen_edit mode or qwen-image-2512 model.")
-    realesrgan_enhance_modes = {"realesrgan", "realesrgan_flux", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}
+    realesrgan_enhance_modes = {"realesrgan", "qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}
     if payload.enhance_mode in realesrgan_enhance_modes and app_settings.service_role != "api":
         from app.upscale_service import realesrgan_available, realesrgan_import_error
 
