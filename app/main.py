@@ -42,8 +42,6 @@ EDIT_SIZE_PRESETS = {
 
 PROMPT_PARAM_PATTERN = re.compile(r"(?P<key>enhance_mode|upscale_fit_mode|aspect_ratio|resolution|size|width|height|qwen_edit_strength|face_enhance)\s*=\s*(?P<value>[^\s,;\]\)]+)", re.IGNORECASE)
 SHANGHAI_TIMEZONE = timezone(timedelta(hours=8))
-PERSON_PROMPT_PATTERN = re.compile(r"人|男|女|孩|老人|头像|肖像|portrait|person|people|man|woman|girl|boy|child|face", re.IGNORECASE)
-ETHNICITY_PROMPT_PATTERN = re.compile(r"中国|华人|亚洲|东亚|欧美|美国|欧洲|白人|黑人|日本|韩国|外国|Chinese|Asian|East Asian|Western|American|European|Caucasian|Black|African|Japanese|Korean|foreigner", re.IGNORECASE)
 
 
 class ImageGenerationRequest(BaseModel):
@@ -60,7 +58,7 @@ class ImageGenerationRequest(BaseModel):
     width: Optional[int] = Field(default=None, ge=64)
     height: Optional[int] = Field(default=None, ge=64)
     num_inference_steps: Optional[int] = Field(default=None, ge=1)
-    seed: Optional[int] = 42
+    seed: Optional[int] = None
     response_format: str = "url"
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
@@ -523,7 +521,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             width=_optional_int(form.get("width")),
             height=_optional_int(form.get("height")),
             num_inference_steps=_optional_int(form.get("num_inference_steps")),
-            seed=_optional_int(form.get("seed")) or 0,
+            seed=_optional_int(form.get("seed")),
             response_format=_optional_str(form.get("response_format")) or "url",
             enhance_mode=_optional_str(form.get("enhance_mode")),
             upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
@@ -559,8 +557,8 @@ async def _run_image_request(
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
     face_enhance = _resolve_face_enhance(payload, app_settings)
-    prompt = _enhance_prompt(payload.prompt, primary_reference_image, app_settings)
-    negative_prompt = _merge_negative_prompt(app_settings.default_negative_prompt, payload.negative_prompt)
+    prompt = (payload.prompt or "").strip()
+    negative_prompt = payload.negative_prompt.strip() if payload.negative_prompt else None
     metadata = {
         "enhance_mode": enhance_mode,
         "prompt": prompt,
@@ -588,7 +586,7 @@ async def _run_image_request(
         generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
         qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
-        qwen_prompt = _qwen_unblur_upscale_prompt(prompt, app_settings) if is_unblur_upscale else prompt
+        qwen_prompt = prompt
         metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
         if not payload.enhance_mode and _is_qwen_image_model(payload.model, app_settings):
             metadata["qwen_image_i2i_fallback"] = "qwen_edit"
@@ -649,17 +647,9 @@ async def _run_image_request(
     generation_width, generation_height = _resolve_generation_dimensions(output_width, output_height, app_settings)
     if enhance_mode == "qwen_image":
         metadata["qwen_image_model_path"] = app_settings.qwen_image_model_path
-        metadata["qwen_image_lora_path"] = app_settings.qwen_image_lora_path
         qwen_image_service = _get_qwen_image_service()
-        metadata["qwen_image_lora_weight_name"] = app_settings.qwen_image_lora_weight_name or qwen_image_service._weight_name_from_adapter_name(app_settings.qwen_image_lora_adapter_name)
-        metadata["qwen_image_lora_adapter_name"] = qwen_image_service._safe_adapter_name(app_settings.qwen_image_lora_adapter_name)
-        metadata["qwen_image_lora_scale"] = app_settings.qwen_image_lora_scale
         metadata["qwen_image_steps"] = payload.num_inference_steps or app_settings.qwen_image_steps
-        metadata["qwen_image_guidance_scale"] = app_settings.qwen_image_guidance_scale
         metadata["qwen_image_true_cfg_scale"] = app_settings.qwen_image_true_cfg_scale
-        metadata["qwen_image_scheduler_exponential_shift_mu"] = app_settings.qwen_image_scheduler_exponential_shift_mu
-        metadata["qwen_image_scheduler_use_dynamic_shifting"] = app_settings.qwen_image_scheduler_use_dynamic_shifting
-        metadata["qwen_image_scheduler_shift_terminal"] = app_settings.qwen_image_scheduler_shift_terminal
         metadata["qwen_image_task_type"] = "image_to_image" if primary_reference_image is not None else "text_to_image"
         metadata["qwen_image_width"] = generation_width
         metadata["qwen_image_height"] = generation_height
@@ -747,7 +737,7 @@ def _image_request_affinity_key(
         upscale_key = "realesrgan" if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} else "pixel"
         return f"qwen_edit:{app_settings.qwen_edit_model_path}:{lora_key}:{upscale_key}"
     if enhance_mode == "qwen_image":
-        return f"qwen_image:{app_settings.qwen_image_model_path}:{app_settings.qwen_image_lora_path}:{app_settings.qwen_image_lora_adapter_name}"
+        return f"qwen_image:{app_settings.qwen_image_model_path}"
     if has_reference_image and enhance_mode in {"pixel", "realesrgan", "realesrgan_flux"}:
         if enhance_mode == "realesrgan_flux":
             return f"realesrgan_flux:{app_settings.realesrgan_model_path}:{app_settings.realesrgan_model_name}:{app_settings.model_path}"
@@ -981,52 +971,6 @@ def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Set
 
 def _resolve_face_enhance(payload: ImageGenerationRequest, app_settings: Settings) -> bool:
     return payload.face_enhance if payload.face_enhance is not None else app_settings.realesrgan_face_enhance
-
-
-def _merge_negative_prompt(default_negative_prompt: str, request_negative_prompt: Optional[str]) -> Optional[str]:
-    terms: list[str] = []
-    seen: set[str] = set()
-    for prompt in (default_negative_prompt, request_negative_prompt):
-        for term in _split_negative_prompt(prompt):
-            normalized = term.casefold()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            terms.append(term)
-    return ", ".join(terms) if terms else None
-
-
-def _split_negative_prompt(prompt: Optional[str]) -> list[str]:
-    if not prompt:
-        return []
-    return [term.strip() for term in re.split(r"[,，;；\n]+", prompt) if term.strip()]
-
-
-def _enhance_prompt(prompt: Optional[str], reference_image, app_settings: Settings) -> str:
-    user_prompt = (prompt or "").strip()
-    if not app_settings.prompt_enhance_enabled or reference_image is not None:
-        return user_prompt
-    if len(user_prompt) > app_settings.prompt_enhance_short_max_chars:
-        return user_prompt
-
-    additions = []
-    if PERSON_PROMPT_PATTERN.search(user_prompt) and not ETHNICITY_PROMPT_PATTERN.search(user_prompt) and app_settings.prompt_enhance_person_suffix:
-        additions.append(app_settings.prompt_enhance_person_suffix)
-    if app_settings.prompt_enhance_suffix:
-        additions.append(app_settings.prompt_enhance_suffix)
-    if not additions:
-        return user_prompt
-    return ", ".join([user_prompt, *additions])
-
-
-def _qwen_unblur_upscale_prompt(prompt: Optional[str], app_settings: Settings) -> str:
-    trigger_prompt = app_settings.qwen_unblur_upscale_trigger_prompt.strip()
-    user_prompt = (prompt or "").strip()
-    if not user_prompt:
-        return trigger_prompt
-    if trigger_prompt and trigger_prompt.lower() not in user_prompt.lower():
-        return f"{trigger_prompt}, {user_prompt}"
-    return user_prompt
 
 
 def _apply_prompt_params(payload: ImageGenerationRequest) -> None:

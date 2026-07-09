@@ -9,7 +9,7 @@ from typing import Optional
 from PIL import Image, ImageOps
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings, get_pipeline_device_map_kwargs, uses_pipeline_device_map
 from app.qwen_image_service import ModelManager, _model_manager
 
 
@@ -177,10 +177,13 @@ class QwenImageEditService:
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
             load_kwargs["device_map"] = self.settings.qwen_edit_device_map
+        else:
+            load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
 
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **load_kwargs)
         cpu_offload_enabled = False
-        if quantization_config is not None:
+        device_map_enabled = uses_pipeline_device_map(load_kwargs)
+        if device_map_enabled:
             pass
         elif apply_pipeline_cpu_offload(pipe, self.settings, self._device):
             cpu_offload_enabled = True
@@ -195,7 +198,7 @@ class QwenImageEditService:
         self._cpu_offload_enabled = cpu_offload_enabled
         
         # 注册到模型管理器
-        self._model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled)
+        self._model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled or device_map_enabled)
         self._model_manager.activate_model(self._model_name)
         
         return pipe
@@ -269,7 +272,7 @@ class QwenImageEditService:
         """卸载当前pipeline"""
         if self._pipe is not None:
             try:
-                if not self._cpu_offload_enabled and hasattr(self._pipe, 'to'):
+                if not self._cpu_offload_enabled and not self._has_device_map() and hasattr(self._pipe, 'to'):
                     self._pipe.to('cpu')
                     logger.info(f"Moved pipeline to CPU before release: {self._model_name}")
                 else:
@@ -285,3 +288,6 @@ class QwenImageEditService:
     def unload(self) -> None:
         """主动释放当前服务持有的 pipeline。"""
         self._unload_pipeline()
+
+    def _has_device_map(self) -> bool:
+        return bool(getattr(self._pipe, "hf_device_map", None))

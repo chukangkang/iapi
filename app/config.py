@@ -1,5 +1,4 @@
 from functools import lru_cache
-import math
 import os
 from pathlib import Path
 import socket
@@ -28,26 +27,12 @@ class Settings(BaseSettings):
     default_height: int = Field(default=1328, ge=64)
     max_generation_pixels: int = Field(default=786432, ge=65536)
     response_metadata_enabled: bool = True
-    default_negative_prompt: str = "low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, smooth skin, plastic look, blurry, oil painting look, AI-generated look, chaotic composition, blurry text, distorted text"
-    prompt_enhance_enabled: bool = True
-    prompt_enhance_short_max_chars: int = Field(default=80, ge=1)
-    prompt_enhance_suffix: str = "high quality, detailed, natural lighting, realistic, clean composition"
-    prompt_enhance_person_suffix: str = ""
     default_enhance_mode: Literal["flux", "qwen_image", "pixel", "realesrgan", "realesrgan_flux", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"] = "flux"
     flux_refine_strength: float = Field(default=0.08, ge=0.0, le=1.0)
     qwen_image_model_name: str = "qwen-image-2512"
-    qwen_image_model_path: str = "unsloth/Qwen-Image-2512-unsloth-bnb-4bit"
-    qwen_image_pipeline_class: str = "QwenImagePipeline"
-    qwen_image_lora_path: str = "Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps"
-    qwen_image_lora_weight_name: str = ""
-    qwen_image_lora_adapter_name: str = "qwen_image_2512_turbo"
-    qwen_image_lora_scale: float = Field(default=1.0, ge=0.0)
-    qwen_image_steps: int = Field(default=2, ge=1)
-    qwen_image_guidance_scale: float = Field(default=1.0, ge=0.0)
-    qwen_image_true_cfg_scale: float = Field(default=1.0, ge=0.0)
-    qwen_image_scheduler_exponential_shift_mu: float = Field(default=math.log(2.5), ge=0.0)
-    qwen_image_scheduler_use_dynamic_shifting: bool = True
-    qwen_image_scheduler_shift_terminal: float = Field(default=0.7155, ge=0.0)
+    qwen_image_model_path: str = "Qwen/Qwen-Image-2512"
+    qwen_image_steps: int = Field(default=50, ge=1)
+    qwen_image_true_cfg_scale: float = Field(default=4.0, ge=0.0)
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
     qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
     qwen_edit_steps: int = Field(default=10, ge=1)
@@ -63,7 +48,6 @@ class Settings(BaseSettings):
     qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "balanced"
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
-    qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
     pixel_sharpen_enabled: bool = True
     pixel_sharpen_radius: float = Field(default=1.4, ge=0.0)
@@ -112,6 +96,8 @@ class Settings(BaseSettings):
     output_dir: Path = Path("outputs")
     public_base_url: str = ""
     hf_token: str = ""
+    model_gpu_count: int = Field(default=1, ge=1, le=4)
+    model_gpu_memory_limit: str = ""
     enable_cpu_offload: bool = False
     cpu_offload_mode: Literal["model", "sequential"] = "model"
     enable_vae_tiling: bool = True

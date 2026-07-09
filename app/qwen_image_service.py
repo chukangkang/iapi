@@ -2,7 +2,6 @@ import asyncio
 import gc
 import inspect
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -10,7 +9,7 @@ from typing import Optional
 from PIL import Image, ImageOps
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings, get_pipeline_device_map_kwargs, uses_pipeline_device_map
 
 
 logger = logging.getLogger(__name__)
@@ -162,7 +161,6 @@ class QwenImageService:
         self._pipe = None
         self._device = None
         self._dtype = None
-        self._lora_loaded = False
         self._model_name = "qwen_image_2512"
         self._cpu_offload_enabled = False
 
@@ -215,28 +213,24 @@ class QwenImageService:
         if image is not None:
             image_argument = self._image_argument_name(signature)
             if image_argument is None:
-                raise RuntimeError(f"{self.settings.qwen_image_pipeline_class} does not support image input for /v1/images/edits.")
+                raise RuntimeError("DiffusionPipeline does not support image input for /v1/images/edits.")
             kwargs[image_argument] = self._prepare_image(image, width, height)
         if negative_prompt and "negative_prompt" in signature:
             kwargs["negative_prompt"] = negative_prompt
         elif "negative_prompt" in signature:
             kwargs["negative_prompt"] = " "
-        if "guidance_scale" in signature:
-            kwargs["guidance_scale"] = self.settings.qwen_image_guidance_scale
         if "true_cfg_scale" in signature:
             kwargs["true_cfg_scale"] = self.settings.qwen_image_true_cfg_scale
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
 
         logger.info(
-            "Qwen Image generation: size=%sx%s steps=%s seed=%s guidance_scale=%s true_cfg_scale=%s lora_loaded=%s",
+            "Qwen Image generation: size=%sx%s steps=%s seed=%s true_cfg_scale=%s",
             width,
             height,
             num_inference_steps,
             seed,
-            kwargs.get("guidance_scale"),
             kwargs.get("true_cfg_scale"),
-            self._lora_loaded,
         )
 
         with torch.inference_mode():
@@ -274,9 +268,9 @@ class QwenImageService:
 
         _model_manager.unload_except(current_model)
 
-        import diffusers
+        from diffusers import DiffusionPipeline
 
-        pipeline_cls = getattr(diffusers, self.settings.qwen_image_pipeline_class)
+        pipeline_cls = DiffusionPipeline
         self._device = self._resolve_device(torch)
         self._dtype = self._resolve_dtype(torch)
 
@@ -285,6 +279,7 @@ class QwenImageService:
             load_kwargs["torch_dtype"] = self._dtype
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
+        load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
 
         model_path = self.settings.qwen_image_model_path
         if self._looks_like_single_file(model_path) and hasattr(pipeline_cls, "from_single_file"):
@@ -292,21 +287,21 @@ class QwenImageService:
         else:
             pipe = pipeline_cls.from_pretrained(model_path, **load_kwargs)
 
-        cpu_offload_enabled = apply_pipeline_cpu_offload(pipe, self.settings, self._device)
+        device_map_enabled = uses_pipeline_device_map(load_kwargs)
+        cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
         if not cpu_offload_enabled:
-            pipe.to(self._device)
+            if not device_map_enabled:
+                pipe.to(self._device)
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
 
-        self._load_lora(pipe)
-        self._apply_scheduler_config(pipe)
         self._pipe = pipe
         self._model_name = current_model
         self._cpu_offload_enabled = cpu_offload_enabled
         
         # 注册到模型管理器
-        _model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled)
+        _model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled or device_map_enabled)
         _model_manager.activate_model(self._model_name)
         
         return pipe
@@ -333,7 +328,7 @@ class QwenImageService:
         """卸载当前pipeline"""
         if self._pipe is not None:
             try:
-                if not self._cpu_offload_enabled and hasattr(self._pipe, 'to'):
+                if not self._cpu_offload_enabled and not self._has_device_map() and hasattr(self._pipe, 'to'):
                     self._pipe.to('cpu')
                     logger.info(f"Moved pipeline to CPU before release: {self._model_name}")
                 else:
@@ -341,7 +336,6 @@ class QwenImageService:
             except Exception as e:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
-            self._lora_loaded = False
             self._cpu_offload_enabled = False
             _model_manager.unregister_model(self._model_name)
             _model_manager._release_torch_memory()
@@ -349,56 +343,6 @@ class QwenImageService:
     def unload(self) -> None:
         """主动释放当前服务持有的 pipeline。"""
         self._unload_pipeline()
-
-    def _load_lora(self, pipe) -> None:
-        if self._lora_loaded or not self.settings.qwen_image_lora_path:
-            return
-        configured_adapter_name = self.settings.qwen_image_lora_adapter_name
-        adapter_name = self._safe_adapter_name(configured_adapter_name)
-        kwargs = {"adapter_name": adapter_name}
-        weight_name = self.settings.qwen_image_lora_weight_name or self._weight_name_from_adapter_name(configured_adapter_name)
-        if weight_name:
-            kwargs["weight_name"] = weight_name
-        pipe.load_lora_weights(self.settings.qwen_image_lora_path, **kwargs)
-        if hasattr(pipe, "set_adapters"):
-            pipe.set_adapters([adapter_name], adapter_weights=[self.settings.qwen_image_lora_scale])
-        elif hasattr(pipe, "fuse_lora"):
-            pipe.fuse_lora(lora_scale=self.settings.qwen_image_lora_scale)
-        self._lora_loaded = True
-        logger.info(
-            "Loaded Qwen Image LoRA: path=%s weight_name=%s adapter_name=%s scale=%s",
-            self.settings.qwen_image_lora_path,
-            weight_name or "<auto>",
-            adapter_name,
-            self.settings.qwen_image_lora_scale,
-        )
-
-    def _apply_scheduler_config(self, pipe) -> None:
-        scheduler = getattr(pipe, "scheduler", None)
-        if scheduler is None:
-            return
-        scheduler_config = {
-            "exponential_shift_mu": self.settings.qwen_image_scheduler_exponential_shift_mu,
-            "use_dynamic_shifting": self.settings.qwen_image_scheduler_use_dynamic_shifting,
-            "shift_terminal": self.settings.qwen_image_scheduler_shift_terminal,
-        }
-        if hasattr(scheduler, "from_config"):
-            pipe.scheduler = scheduler.__class__.from_config(scheduler.config, **scheduler_config)
-        else:
-            for key, value in scheduler_config.items():
-                setattr(scheduler, key, value)
-        logger.info("Applied Qwen Image scheduler config: %s", scheduler_config)
-
-    def _safe_adapter_name(self, adapter_name: str) -> str:
-        value = (adapter_name or "qwen_image_2512_turbo").strip()
-        value = Path(value).stem if Path(value).suffix else value
-        value = re.sub(r"[^0-9A-Za-z_]", "_", value)
-        value = re.sub(r"_+", "_", value).strip("_")
-        return value or "qwen_image_2512_turbo"
-
-    def _weight_name_from_adapter_name(self, adapter_name: str) -> str:
-        value = (adapter_name or "").strip()
-        return Path(value).name if Path(value).suffix.lower() == ".safetensors" else ""
 
     def _looks_like_single_file(self, model_path: str) -> bool:
         suffix = Path(model_path).suffix.lower()
@@ -414,9 +358,14 @@ class QwenImageService:
         return "cpu"
 
     def _resolve_dtype(self, torch):
+        if self.settings.torch_dtype == "bfloat16" and self._device == "cpu":
+            return torch.float32
         if self.settings.torch_dtype == "auto":
-            return None
+            return torch.bfloat16 if self._device == "cuda" else torch.float32
         return getattr(torch, self.settings.torch_dtype)
+
+    def _has_device_map(self) -> bool:
+        return bool(getattr(self._pipe, "hf_device_map", None))
 
     def _generator_device(self) -> str:
         if not self._device or self._device == "mps":

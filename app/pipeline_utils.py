@@ -1,9 +1,31 @@
 import logging
+from typing import Any
 
 from app.config import Settings
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_pipeline_device_map_kwargs(settings: Settings, torch: Any, device: str) -> dict[str, Any]:
+    if not device.startswith("cuda") or settings.model_gpu_count <= 1:
+        return {}
+
+    available_gpu_count = torch.cuda.device_count()
+    gpu_count = min(settings.model_gpu_count, available_gpu_count, 4)
+    if gpu_count <= 1:
+        return {}
+
+    kwargs: dict[str, Any] = {"device_map": "balanced"}
+    max_memory = _device_map_max_memory(settings, torch, gpu_count)
+    if max_memory:
+        kwargs["max_memory"] = max_memory
+    logger.info("Enabled multi-GPU pipeline loading: device_map=balanced gpu_count=%s", gpu_count)
+    return kwargs
+
+
+def uses_pipeline_device_map(load_kwargs: dict[str, Any]) -> bool:
+    return "device_map" in load_kwargs
 
 
 def apply_pipeline_cpu_offload(pipe: object, settings: Settings, device: str) -> bool:
@@ -31,6 +53,22 @@ def apply_pipeline_cpu_offload(pipe: object, settings: Settings, device: str) ->
 
     logger.warning("CPU offload requested, but pipeline does not expose an offload method")
     return False
+
+
+def _device_map_max_memory(settings: Settings, torch: Any, gpu_count: int) -> dict[int, str]:
+    if settings.model_gpu_memory_limit:
+        return {index: settings.model_gpu_memory_limit for index in range(gpu_count)}
+
+    max_memory: dict[int, str] = {}
+    for index in range(gpu_count):
+        try:
+            total_gib = torch.cuda.get_device_properties(index).total_memory // (1024**3)
+        except Exception as exc:
+            logger.debug("Failed to read CUDA device %s memory: %s", index, exc)
+            return {}
+        if total_gib > 0:
+            max_memory[index] = f"{total_gib}GiB"
+    return max_memory
 
 
 def apply_pipeline_memory_settings(pipe: object, settings: Settings) -> None:

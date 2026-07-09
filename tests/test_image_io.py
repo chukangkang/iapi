@@ -60,6 +60,20 @@ def test_response_format_rejects_unknown_values():
         raise AssertionError("Expected invalid response_format to fail")
 
 
+def test_seed_defaults_to_none():
+    payload = ImageGenerationRequest(prompt="test")
+
+    assert payload.seed is None
+
+
+def test_qwen_image_2512_uses_official_defaults():
+    settings = Settings(_env_file=None)
+
+    assert settings.qwen_image_model_path == "Qwen/Qwen-Image-2512"
+    assert settings.qwen_image_steps == 50
+    assert settings.qwen_image_true_cfg_scale == 4.0
+
+
 def test_realesrgan_enhance_mode_allows_empty_model_path_for_default_weights():
     payload = ImageGenerationRequest(prompt="test", image=_sample_base64_png(), enhance_mode="realesrgan")
 

@@ -7,7 +7,7 @@ from typing import Optional
 from PIL import Image
 
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings
+from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings, get_pipeline_device_map_kwargs, uses_pipeline_device_map
 
 
 logger = logging.getLogger(__name__)
@@ -97,12 +97,15 @@ class FluxImageService:
             load_kwargs["torch_dtype"] = self._dtype
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
+        load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
 
         pipe = Flux2KleinKVPipeline.from_pretrained(self.settings.model_path, **load_kwargs)
 
-        self._cpu_offload_enabled = apply_pipeline_cpu_offload(pipe, self.settings, self._device)
+        device_map_enabled = uses_pipeline_device_map(load_kwargs)
+        self._cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
         if not self._cpu_offload_enabled:
-            pipe.to(self._device)
+            if not device_map_enabled:
+                pipe.to(self._device)
 
         apply_pipeline_memory_settings(pipe, self.settings)
 
@@ -116,7 +119,7 @@ class FluxImageService:
         if self._pipe is None:
             return
         try:
-            if not self._cpu_offload_enabled and hasattr(self._pipe, "to"):
+            if not self._cpu_offload_enabled and not self._has_device_map() and hasattr(self._pipe, "to"):
                 self._pipe.to("cpu")
                 logger.info("Moved FLUX pipeline to CPU before release")
             else:
@@ -151,6 +154,9 @@ class FluxImageService:
         if self.settings.torch_dtype == "auto":
             return None
         return getattr(torch, self.settings.torch_dtype)
+
+    def _has_device_map(self) -> bool:
+        return bool(getattr(self._pipe, "hf_device_map", None))
 
     def _generator_device(self) -> str:
         if not self._device or self._device == "mps":

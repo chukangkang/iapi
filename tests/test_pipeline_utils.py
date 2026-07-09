@@ -1,5 +1,5 @@
 from app.config import Settings
-from app.pipeline_utils import apply_pipeline_cpu_offload
+from app.pipeline_utils import apply_pipeline_cpu_offload, get_pipeline_device_map_kwargs
 
 
 class FakePipeline:
@@ -35,3 +35,49 @@ def test_cpu_offload_skips_non_cuda_devices():
 
     assert apply_pipeline_cpu_offload(pipe, settings, "cpu") is False
     assert pipe.calls == []
+
+
+class FakeCudaDeviceProperties:
+    total_memory = 24 * 1024**3
+
+
+class FakeCuda:
+    @staticmethod
+    def device_count():
+        return 4
+
+    @staticmethod
+    def get_device_properties(index):
+        return FakeCudaDeviceProperties()
+
+
+class FakeTorch:
+    cuda = FakeCuda()
+
+
+def test_device_map_skips_single_gpu_config():
+    settings = Settings(model_gpu_count=1)
+
+    assert get_pipeline_device_map_kwargs(settings, FakeTorch, "cuda") == {}
+
+
+def test_device_map_uses_balanced_for_multi_gpu_config():
+    settings = Settings(model_gpu_count=4)
+
+    kwargs = get_pipeline_device_map_kwargs(settings, FakeTorch, "cuda")
+
+    assert kwargs == {
+        "device_map": "balanced",
+        "max_memory": {0: "24GiB", 1: "24GiB", 2: "24GiB", 3: "24GiB"},
+    }
+
+
+def test_device_map_applies_explicit_memory_limit():
+    settings = Settings(model_gpu_count=2, model_gpu_memory_limit="20GiB")
+
+    kwargs = get_pipeline_device_map_kwargs(settings, FakeTorch, "cuda")
+
+    assert kwargs == {
+        "device_map": "balanced",
+        "max_memory": {0: "20GiB", 1: "20GiB"},
+    }

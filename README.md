@@ -1,6 +1,6 @@
 # FLUX.2 Klein KV OpenAI Image API
 
-一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`，也支持通过 `model=qwen-image-2512` 默认切换到 Qwen Image 2512 + Turbo LoRA 生图与编辑；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
+一个基于 FastAPI + 🧨 Diffusers 的 OpenAI 风格图片接口服务，默认使用 `black-forest-labs/FLUX.2-klein-9b-kv` 和 `Flux2KleinKVPipeline`，也支持通过 `model=qwen-image-2512` 默认切换到官方 Qwen Image 2512 `DiffusionPipeline` 文生图；显式传入 `enhance_mode` 时会优先按 `enhance_mode` 选择处理链路。
 
 ## 接口
 
@@ -27,7 +27,7 @@
 | 字段 | 说明 | 默认值 |
 | --- | --- | --- |
 | `prompt` | 提示词，必填 | - |
-| `negative_prompt` | 反向词；会与 `.env` 的 `DEFAULT_NEGATIVE_PROMPT` 去重合并，底层 pipeline 支持时生效 | `.env` 默认值 |
+| `negative_prompt` | 反向词；仅使用请求中显式传入的值，底层 pipeline 支持时生效 | `null` |
 | `image` | 可选参考图；存在时走 i2i/KV cache 流程 | `null` |
 | `aspect_ratio` | generations 使用 Qwen Image 2512 标准比例；edits 可搭配 `resolution=2k/4k` 输出高清尺寸 | `1:1` |
 | `size` / `resolution` | generations 不推荐传；edits 可传 `size=3840x2160` 或 `aspect_ratio=16:9` + `resolution=4k` | `null` |
@@ -149,8 +149,7 @@ TOKENIZERS_PARALLELISM=false
 | 用途 | 配置项 | 默认值 / 文件名 | 下载地址 | 是否必需 |
 | --- | --- | --- | --- | --- |
 | FLUX 文生图/图生图基座 | `MODEL_PATH` | `black-forest-labs/FLUX.2-klein-9b-kv` | https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-kv | 使用 `flux` / 默认生成时必需 |
-| Qwen Image 2512 文生图基座 | `QWEN_IMAGE_MODEL_PATH` | `unsloth/Qwen-Image-2512-unsloth-bnb-4bit` | https://huggingface.co/unsloth/Qwen-Image-2512-unsloth-bnb-4bit | 使用 `qwen_image` 或 `model=qwen-image-2512` 时必需 |
-| Qwen Image 2512 Turbo LoRA | `QWEN_IMAGE_LORA_PATH` | `Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps` | https://huggingface.co/Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps | 使用 `qwen_image` 时默认加载 |
+| Qwen Image 2512 文生图基座 | `QWEN_IMAGE_MODEL_PATH` | `Qwen/Qwen-Image-2512` | https://huggingface.co/Qwen/Qwen-Image-2512 | 使用 `qwen_image` 或 `model=qwen-image-2512` 时必需 |
 | Qwen 图片编辑基座 | `QWEN_EDIT_MODEL_PATH` | `Qwen/Qwen-Image-Edit-2511` | https://huggingface.co/Qwen/Qwen-Image-Edit-2511 | 使用 `qwen_edit*` / `qwen_unblur_upscale*` 时必需 |
 | Qwen 去模糊高清 LoRA | `QWEN_UNBLUR_UPSCALE_LORA_PATH` | `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale | 使用 `qwen_unblur_upscale*` 时必需 |
 | Qwen LoRA 权重文件 | `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` | `Qwen-Image-Edit-Unblur-Upscale_20.safetensors` | https://huggingface.co/prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale/tree/main | 使用 `qwen_unblur_upscale*` 时必需 |
@@ -166,18 +165,13 @@ Hugging Face 模型可直接填仓库 ID，Diffusers 会在首次加载时自动
 ```env
 DEFAULT_ENHANCE_MODE=flux
 RESPONSE_METADATA_ENABLED=true
-DEFAULT_NEGATIVE_PROMPT=low resolution, low quality, deformed limbs, deformed fingers, oversaturated image, wax figure look, face lacking details, overly smooth skin, smooth skin, plastic look, blurry, oil painting look, AI-generated look, chaotic composition, blurry text, distorted text
 FLUX_REFINE_STRENGTH=0.08
+MODEL_GPU_COUNT=1
+MODEL_GPU_MEMORY_LIMIT=
 QWEN_IMAGE_MODEL_NAME=qwen-image-2512
-QWEN_IMAGE_MODEL_PATH=unsloth/Qwen-Image-2512-unsloth-bnb-4bit
-QWEN_IMAGE_PIPELINE_CLASS=QwenImagePipeline
-QWEN_IMAGE_LORA_PATH=Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps
-QWEN_IMAGE_LORA_WEIGHT_NAME=
-QWEN_IMAGE_LORA_ADAPTER_NAME=qwen_image_2512_turbo
-QWEN_IMAGE_LORA_SCALE=1.0
-QWEN_IMAGE_STEPS=2
-QWEN_IMAGE_GUIDANCE_SCALE=1.0
-QWEN_IMAGE_TRUE_CFG_SCALE=1.0
+QWEN_IMAGE_MODEL_PATH=Qwen/Qwen-Image-2512
+QWEN_IMAGE_STEPS=50
+QWEN_IMAGE_TRUE_CFG_SCALE=4.0
 QWEN_EDIT_MODEL_PATH=Qwen/Qwen-Image-Edit-2511
 QWEN_EDIT_PIPELINE_CLASS=QwenImageEditPlusPipeline
 QWEN_EDIT_STEPS=4
@@ -193,7 +187,6 @@ QWEN_EDIT_QUANTIZATION=none
 QWEN_EDIT_DEVICE_MAP=balanced
 QWEN_UNBLUR_UPSCALE_LORA_PATH=prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale
 QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME=Qwen-Image-Edit-Unblur-Upscale_20.safetensors
-QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT=unblur and upscale, preserve the original composition, identity, text, colors, layout, and details
 QWEN_UNBLUR_UPSCALE_LORA_SCALE=0.25
 PIXEL_SHARPEN_ENABLED=true
 PIXEL_SHARPEN_RADIUS=0.9
@@ -218,18 +211,20 @@ REALESRGAN_GPU_ID=
 REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 ```
 
-`DEFAULT_NEGATIVE_PROMPT` 是全局默认反向词。当前端不传 `negative_prompt` 时会直接使用该配置；当前端传入时，服务会按英文逗号、中文逗号、分号和换行拆分后去重合并，避免重复堆叠相同反向词。
+服务不会自动追加默认反向词；只有请求显式传入 `negative_prompt` 时才会传给底层 pipeline。
 
 `RESPONSE_METADATA_ENABLED=true` 会在图片响应中返回调试用 `metadata`；生产线上可设为 `false`，响应将不包含 `metadata` 字段。
 
-`enhance_mode` 是独立的处理链路选择参数，显式传入时优先级高于 `model`。`qwen_image` 可通过两种方式启用：请求里传 `model=qwen-image-2512` 且不传 `enhance_mode`，或显式传 `enhance_mode=qwen_image`。前者适合 New API / OpenAI 兼容网关按模型名设置默认链路；后者适合直接调用本服务并明确指定处理模式。也就是说，`model=qwen-image-2512` + `enhance_mode=qwen_unblur_upscale_realesrgan` 会走 Qwen Image Edit 2511 + Unblur/Upscale LoRA + Real-ESRGAN 链路，而不是强制走 2512。`/v1/images/generations` 不传 `image` 时走文生图，`/v1/images/edits` 或 generations 传 `image` 时会把原图传给当前选定链路。`QWEN_IMAGE_MODEL_PATH` 默认使用 Unsloth 官方 Diffusers 4-bit 仓库 `unsloth/Qwen-Image-2512-unsloth-bnb-4bit`；如果要用 `unsloth/Qwen-Image-2512-GGUF`，需要改接 ComfyUI-GGUF 或 stable-diffusion.cpp 后端，不能直接用当前 Diffusers 服务加载单个 `.gguf` 文件。`QWEN_IMAGE_LORA_PATH` 默认使用 `Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps`，`QWEN_IMAGE_STEPS=2` 对应该 Turbo LoRA 推荐的低步数生图。
+`MODEL_GPU_COUNT` 控制 Diffusers 模型加载使用的 GPU 数量，支持 `1` 到 `4`。默认 `1` 保持单卡加载；设置为 `2`、`3` 或 `4` 且机器有足够 CUDA 设备时，会在加载 FLUX、Qwen Image 2512、Qwen Image Edit 时向 `from_pretrained` 传入 `device_map="balanced"`，把模型分布到多张 GPU。`MODEL_GPU_MEMORY_LIMIT` 可选，用于给每张卡设置相同的 `max_memory`，例如 `20GiB`；留空时按各 GPU 总显存自动生成上限。启用多卡 `device_map` 时不会再调用 pipeline `.to(device)` 或 CPU offload，避免和 Diffusers device map 冲突。
+
+`enhance_mode` 是独立的处理链路选择参数，显式传入时优先级高于 `model`。`qwen_image` 可通过两种方式启用：请求里传 `model=qwen-image-2512` 且不传 `enhance_mode`，或显式传 `enhance_mode=qwen_image`。前者适合 New API / OpenAI 兼容网关按模型名设置默认链路；后者适合直接调用本服务并明确指定处理模式。也就是说，`model=qwen-image-2512` + `enhance_mode=qwen_unblur_upscale_realesrgan` 会走 Qwen Image Edit 2511 + Unblur/Upscale LoRA + Real-ESRGAN 链路，而不是强制走 2512。`/v1/images/generations` 不传 `image` 时走官方 Qwen Image 2512 `DiffusionPipeline` 文生图；`/v1/images/edits` 或 generations 传 `image` 时默认走 Qwen Image Edit 2511。`QWEN_IMAGE_MODEL_PATH` 默认使用官方 Diffusers 仓库 `Qwen/Qwen-Image-2512`，加载方式等价于 `DiffusionPipeline.from_pretrained(model_name, torch_dtype=torch_dtype).to(device)`；默认 `QWEN_IMAGE_STEPS=50`、`QWEN_IMAGE_TRUE_CFG_SCALE=4.0`。
 
 模式说明：
 
 | 模式 | 说明 | 文字一致性 |
 | --- | --- | --- |
 | `flux` | FLUX 文生图/图生图；图生图会按 `flux_refine_strength` 低强度参考原图重绘 | 可能改变文字 |
-| `qwen_image` | Qwen Image 2512 Diffusers 4-bit 生图/高清编辑，默认加载 Turbo LoRA 并使用 2 步推理 | 取决于提示词 |
+| `qwen_image` | 官方 Qwen Image 2512 `DiffusionPipeline` 文生图，默认 50 步、`true_cfg_scale=4.0` | 取决于提示词 |
 | `pixel` | Lanczos 像素放大 + 可配置锐化，不进扩散模型 | 最稳定 |
 | `realesrgan` | 先用 Real-ESRGAN 多轮超分覆盖标准目标尺寸，再缩放到目标尺寸，不进 FLUX | 高 |
 | `realesrgan_flux` | 先 Real-ESRGAN，再尝试 FLUX 极低强度细节修复 | 仍可能轻微改变 |
@@ -242,7 +237,7 @@ REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 
 | `model` | `enhance_mode` | 实际链路 | 说明 |
 | --- | --- | --- | --- |
-| `qwen-image-2512` | 未传 | Qwen Image 2512 | 默认走 `qwen_image`，加载 `QWEN_IMAGE_MODEL_PATH` + Turbo LoRA，原图会作为 image input 传给 2512 pipeline |
+| `qwen-image-2512` | 未传 | Qwen Image 2512 | 无输入图时默认走官方 `DiffusionPipeline` 文生图；有输入图时默认走 Qwen Image Edit 2511 |
 | `qwen-image-2512` | `qwen_image` | Qwen Image 2512 | 显式指定 2512 生图/编辑链路，适合希望直接使用 2512 时使用 |
 | `qwen-image-2512` | `flux` | FLUX img2img | `enhance_mode` 优先级高于 `model`，因此会忽略 2512 默认链路，改走 FLUX 参考图重绘 |
 | `qwen-image-2512` | `pixel` | 像素放大/锐化 | 不进入扩散模型，适合最大化保持文字、LOGO 和布局 |
@@ -263,7 +258,7 @@ REALESRGAN_ALPHA_UPSAMPLER=realesrgan
 
 `QWEN_EDIT_TRUE_CFG_SCALE=2.0` 会在 pipeline 支持 `true_cfg_scale` 时自动传入，通常比 `4.0` 更少产生过拟合边缘；老 pipeline 不支持时会自动忽略。`QWEN_EDIT_STEPS=4` 适合配合 Unblur/Upscale LoRA 做低步数轻修复，如果要更强重绘可逐步升到 `6` 或 `8`，但重影风险也会增加。
 
-`qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`。`QWEN_UNBLUR_UPSCALE_TRIGGER_PROMPT` 会自动拼到用户请求的 `prompt` 前面以触发 LoRA，不会覆盖用户提示词；如果请求提示词里已经包含触发词，则不会重复拼接。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
+`qwen_unblur_upscale` 使用 Hugging Face 上的 `prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale` LoRA。它不是完整模型，而是加载到 `Qwen/Qwen-Image-Edit-2511` 基座上的适配器；默认权重文件是作者推荐的 `Qwen-Image-Edit-Unblur-Upscale_20.safetensors`。服务不会自动拼接触发词；如需触发 LoRA，请在请求 `prompt` 中显式写入对应触发描述。如果想更弱一点，可把 `QWEN_UNBLUR_UPSCALE_LORA_WEIGHT_NAME` 改成 `_15.safetensors` 或 `_10.safetensors`。
 
 截图中的 Qwen 工作流尺寸参数对应这里的 `QWEN_EDIT_SCALE_TO_SIDE=longest`、`QWEN_EDIT_SCALE_TO_LENGTH`、`QWEN_EDIT_ROUND_TO_MULTIPLE=16`、`QWEN_EDIT_BACKGROUND_COLOR=#000000`。为减少重影，推荐先用 `QWEN_EDIT_SCALE_TO_LENGTH=1280` 轻修复；如果源图本身很清晰且显存充足，再尝试 `1536` 或 `2048`。服务会先把参考图按最长边缩放，再 letterbox 到 16 的倍数尺寸，送入 Qwen Edit；最终再输出到 `aspect_ratio` 对应的标准尺寸。
 
@@ -635,7 +630,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits ^
   -F "flux_refine_strength=0.08"
 ```
 
-如果希望 `/v1/images/edits` 在高清 4K 时直接使用 Qwen Image 2512 Diffusers 4-bit + Turbo LoRA，可以使用模型名默认路由，或显式传 `enhance_mode=qwen_image`：
+如果希望 `/v1/images/generations` 直接使用官方 Qwen Image 2512 `DiffusionPipeline`，可以使用模型名默认路由，或显式传 `enhance_mode=qwen_image`：
 
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/images/edits ^
