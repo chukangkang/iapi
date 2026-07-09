@@ -177,8 +177,10 @@ class QwenImageEditService:
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
             load_kwargs["device_map"] = self.settings.qwen_edit_device_map
-        else:
+        elif self.settings.qwen_edit_multi_gpu_enabled:
             load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
+        else:
+            logger.info("Qwen Edit multi-GPU loading disabled; loading on single device: %s", self._device)
 
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **load_kwargs)
         cpu_offload_enabled = False

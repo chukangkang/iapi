@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     qwen_edit_background_color: str = "#000000"
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"
     qwen_edit_device_map: Literal["balanced", "cuda", "cpu"] = "balanced"
+    qwen_edit_multi_gpu_enabled: bool = True
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
