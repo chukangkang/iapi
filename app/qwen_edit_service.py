@@ -178,8 +178,7 @@ class QwenImageEditService:
         quantization_config = self._quantization_config(diffusers)
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
-            if self.settings.qwen_edit_device_map != "none":
-                load_kwargs["device_map"] = self.settings.qwen_edit_device_map
+            load_kwargs["device_map"] = self.settings.qwen_edit_device_map if self.settings.qwen_edit_device_map != "none" else "cuda"
         elif self.settings.qwen_edit_multi_gpu_enabled:
             load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
         else:
