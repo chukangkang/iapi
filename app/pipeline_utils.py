@@ -20,7 +20,11 @@ def get_pipeline_device_map_kwargs(settings: Settings, torch: Any, device: str) 
     max_memory = _device_map_max_memory(settings, torch, gpu_count)
     if max_memory:
         kwargs["max_memory"] = max_memory
-    logger.info("Enabled multi-GPU pipeline loading: device_map=balanced gpu_count=%s", gpu_count)
+    logger.info(
+        "Enabled multi-GPU pipeline loading: device_map=balanced gpu_count=%s visible_devices=%s",
+        gpu_count,
+        settings.model_gpu_ids or "CUDA_VISIBLE_DEVICES/default",
+    )
     return kwargs
 
 

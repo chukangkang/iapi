@@ -290,8 +290,6 @@ class QwenImageService:
         model_path = self.settings.qwen_image_model_path
         pipeline_load_kwargs = load_kwargs.copy()
         if transformer_sharded:
-            pipeline_load_kwargs.pop("device_map", None)
-            pipeline_load_kwargs.pop("max_memory", None)
             pipeline_load_kwargs["transformer"] = transformer
         if self._looks_like_single_file(model_path) and hasattr(pipeline_cls, "from_single_file"):
             pipe = pipeline_cls.from_single_file(model_path, **pipeline_load_kwargs)
@@ -303,8 +301,6 @@ class QwenImageService:
         if not cpu_offload_enabled:
             if not device_map_enabled:
                 pipe.to(self._device)
-            elif transformer_sharded:
-                self._move_unsharded_components_to_device(pipe, torch)
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)

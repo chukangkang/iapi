@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     public_base_url: str = ""
     hf_token: str = ""
     model_gpu_count: int = Field(default=1, ge=1, le=4)
+    model_gpu_ids: str = ""
     model_gpu_memory_limit: str = ""
     enable_cpu_offload: bool = False
     cpu_offload_mode: Literal["model", "sequential"] = "model"
@@ -149,6 +150,8 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    if settings.model_gpu_ids:
+        os.environ["CUDA_VISIBLE_DEVICES"] = settings.model_gpu_ids
     if settings.pytorch_cuda_alloc_conf:
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", settings.pytorch_cuda_alloc_conf)
     if settings.tokenizers_parallelism:
