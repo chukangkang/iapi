@@ -1,6 +1,7 @@
 fastapi>=0.115.0
 starlette>=0.37.2
 anyio>=3.7.1
+annotated-doc>=0.0.2
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 pydantic>=2.7.0
