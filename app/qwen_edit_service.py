@@ -22,10 +22,13 @@ class QwenImageEditService:
         self._pipe = None
         self._device = None
         self._dtype = None
-        self._active_adapter = None
         self._model_name = "qwen_image_edit_2511"
         self._model_manager = _model_manager
         self._cpu_offload_enabled = False
+        self._edit_lora_active = False
+        self._lora_path: Optional[str] = None
+        self._lora_weight_name: Optional[str] = None
+        self._lora_scale: float = 1.0
 
 
     async def edit(
@@ -69,8 +72,10 @@ class QwenImageEditService:
         )
 
     def _prepare_sync(self, *, lora_path: Optional[str], lora_weight_name: Optional[str], lora_scale: float) -> None:
-        pipe = self._get_pipeline()
-        self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name, lora_scale=lora_scale)
+        self._lora_path = lora_path
+        self._lora_weight_name = lora_weight_name
+        self._lora_scale = lora_scale
+        self._get_pipeline()
 
     def _edit_sync(
         self,
@@ -90,8 +95,11 @@ class QwenImageEditService:
     ) -> Image.Image:
         import torch
 
+        self._lora_path = lora_path
+        self._lora_weight_name = lora_weight_name
+        self._lora_scale = lora_scale
+
         pipe = self._get_pipeline()
-        adapter_name = self._ensure_lora(pipe, lora_path=lora_path, lora_weight_name=lora_weight_name, lora_scale=lora_scale)
         signature = inspect.signature(pipe.__call__).parameters
         kwargs = {
             "prompt": prompt,
@@ -112,54 +120,41 @@ class QwenImageEditService:
             kwargs["strength"] = strength
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
-        if adapter_name and "cross_attention_kwargs" in signature:
-            kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
-
-        # 推理前确保未分片的组件在 GPU 上（LoRA 加载可能重新分配了设备）
-        if getattr(self._pipe, "hf_device_map", None) or any(
-            getattr(c, "hf_device_map", None)
-            for c in (getattr(pipe, "components", {}) or {}).values()
-        ):
-            self._move_unsharded_components_to_device(pipe, torch)
-            # 确认关键组件设备
-            self._verify_component_devices(pipe)
+        if self._edit_lora_active and "cross_attention_kwargs" in signature:
+            kwargs["cross_attention_kwargs"] = {"scale": self._lora_scale}
 
         with torch.no_grad():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
 
-    def _ensure_lora(self, pipe, *, lora_path: Optional[str], lora_weight_name: Optional[str], lora_scale: float) -> Optional[str]:
-        if not lora_path:
-            if hasattr(pipe, "disable_lora"):
-                pipe.disable_lora()
-            if self._active_adapter is not None:
-                logger.info("LoRA disabled (no lora_path), previous adapter was '%s'", self._active_adapter)
-            self._active_adapter = None
-            return None
+    def _apply_edit_lora(self, pipe) -> None:
+        """与 QwenImage 2512 一致：fuse_lora + unload_lora_weights，消除 adapter 模式。"""
+        if self._edit_lora_active:
+            return
+        if not self._lora_path:
+            return
+        if not hasattr(pipe, "load_lora_weights"):
+            return
+
+        logger.info(
+            "Loading Qwen Edit LoRA: path=%s weight=%s scale=%s",
+            self._lora_path,
+            self._lora_weight_name,
+            self._lora_scale,
+        )
         adapter_name = "qwen_unblur_upscale"
-        loaded_adapters = getattr(pipe, "get_list_adapters", lambda: {})()
-        adapter_loaded = adapter_name in loaded_adapters or any(adapter_name in names for names in loaded_adapters.values()) if isinstance(loaded_adapters, dict) else False
-        if not adapter_loaded:
-            logger.info("Loading LoRA weights from '%s' (weight_name=%s, adapter_name=%s)...", lora_path, lora_weight_name, adapter_name)
-            kwargs = {"adapter_name": adapter_name}
-            if lora_weight_name:
-                kwargs["weight_name"] = lora_weight_name
-            pipe.load_lora_weights(lora_path, **kwargs)
-            logger.info("LoRA weights loaded successfully: adapter='%s', path='%s'", adapter_name, lora_path)
-        else:
-            logger.info("LoRA adapter '%s' already loaded, reusing", adapter_name)
-        if self._active_adapter == adapter_name:
-            if hasattr(pipe, "set_adapters"):
-                pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
-            logger.debug("LoRA adapter '%s' scale updated to %.2f", adapter_name, lora_scale)
-            return adapter_name
+        lora_kwargs = {"adapter_name": adapter_name}
+        if self._lora_weight_name:
+            lora_kwargs["weight_name"] = self._lora_weight_name
+        pipe.load_lora_weights(self._lora_path, **lora_kwargs)
         if hasattr(pipe, "set_adapters"):
-            pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
-        elif hasattr(pipe, "enable_lora"):
-            pipe.enable_lora()
-        self._active_adapter = adapter_name
-        logger.info("LoRA adapter '%s' activated with scale=%.2f", adapter_name, lora_scale)
-        return adapter_name
+            pipe.set_adapters([adapter_name], adapter_weights=[self._lora_scale])
+        if hasattr(pipe, "fuse_lora"):
+            pipe.fuse_lora(adapter_names=[adapter_name], lora_scale=self._lora_scale)
+        if hasattr(pipe, "unload_lora_weights"):
+            pipe.unload_lora_weights()
+        self._edit_lora_active = True
+        logger.info("Qwen Edit LoRA fused into model weights (scale=%.2f)", self._lora_scale)
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
         if self.settings.qwen_edit_input_fit_mode == "cover":
@@ -222,9 +217,10 @@ class QwenImageEditService:
         cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
         if not cpu_offload_enabled and not device_map_enabled:
             pipe.to(self._device)
-        # 不在 _get_pipeline 中移动组件到 GPU，因为后续 _ensure_lora 的 load_lora_weights
-        # 耗时较长且可能内部重新分配设备。改为在 _edit_sync 推理前执行。
         apply_pipeline_memory_settings(pipe, self.settings)
+        self._apply_edit_lora(pipe)
+        if device_map_enabled:
+            self._move_unsharded_components_to_device(pipe, torch)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
         self._log_device_map(pipe)
@@ -319,7 +315,7 @@ class QwenImageEditService:
             except Exception as e:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
-            self._active_adapter = None
+            self._edit_lora_active = False
             self._cpu_offload_enabled = False
             self._model_manager.unregister_model(self._model_name)
             self._model_manager._release_torch_memory()
@@ -376,24 +372,3 @@ class QwenImageEditService:
             return self._device
         _, device_index = min(memory_by_device)
         return f"cuda:{device_index}"
-
-    def _verify_component_devices(self, pipe) -> None:
-        """推理前验证关键组件确实在 GPU 上。"""
-        components = getattr(pipe, "components", {}) or {}
-        for name in ("vae", "text_encoder", "transformer"):
-            component = components.get(name)
-            if component is None:
-                continue
-            if getattr(component, "hf_device_map", None):
-                continue
-            try:
-                device = str(next(component.parameters()).device)
-            except StopIteration:
-                device = "no_params"
-            if device == "cpu":
-                logger.warning(
-                    "Qwen Edit component '%s' is still on CPU before inference! This will cause slow generation.",
-                    name,
-                )
-            else:
-                logger.debug("Qwen Edit component '%s' on %s before inference", name, device)
