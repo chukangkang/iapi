@@ -854,7 +854,9 @@ def _resolve_generation_dimensions(output_width: int, output_height: int, app_se
 
 
 def _resolve_qwen_edit_dimensions(output_width: int, output_height: int, app_settings: Settings) -> tuple[int, int]:
-    if app_settings.qwen_edit_scale_to_side == "shortest":
+    if app_settings.qwen_edit_scale_to_length == 0:
+        scale = 1.0
+    elif app_settings.qwen_edit_scale_to_side == "shortest":
         scale = app_settings.qwen_edit_scale_to_length / min(output_width, output_height)
     else:
         scale = app_settings.qwen_edit_scale_to_length / max(output_width, output_height)

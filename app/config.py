@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
     qwen_edit_strength: float = Field(default=0.7, ge=0.0, le=1.0)
     qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
-    qwen_edit_scale_to_length: int = Field(default=2048, ge=64)
+    qwen_edit_scale_to_length: int = Field(default=2048, ge=0)
     qwen_edit_round_to_multiple: int = Field(default=16, ge=1)
     qwen_edit_input_fit_mode: Literal["contain", "cover"] = "contain"
     qwen_edit_background_color: str = "#000000"

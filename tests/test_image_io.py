@@ -1,8 +1,10 @@
+import pytest
 from fastapi import HTTPException
 from PIL import Image
+from pydantic import ValidationError
 
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image
-from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _validate_image_payload
+from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_qwen_edit_dimensions, _validate_image_payload
 from app.config import Settings
 
 
@@ -72,6 +74,17 @@ def test_qwen_image_2512_uses_official_defaults():
     assert settings.qwen_image_model_path == "Qwen/Qwen-Image-2512"
     assert settings.qwen_image_steps == 50
     assert settings.qwen_image_true_cfg_scale == 4.0
+
+
+def test_qwen_edit_scale_to_length_zero_disables_scaling():
+    settings = Settings(_env_file=None, qwen_edit_scale_to_length=0, qwen_edit_round_to_multiple=16)
+
+    assert _resolve_qwen_edit_dimensions(1025, 769, settings) == (1024, 768)
+
+
+def test_qwen_edit_scale_to_length_rejects_negative_values():
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, qwen_edit_scale_to_length=-1)
 
 
 def test_realesrgan_enhance_mode_allows_empty_model_path_for_default_weights():
