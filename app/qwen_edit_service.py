@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,6 +28,7 @@ class QwenImageEditService:
         self._lora_path: Optional[str] = None
         self._lora_weight_name: Optional[str] = None
         self._lora_scale: float = 1.0
+        self._pipe_lock = threading.Lock()
 
 
     async def edit(
@@ -119,7 +121,7 @@ class QwenImageEditService:
         if seed is not None:
             kwargs["generator"] = torch.Generator(device=self._generator_device()).manual_seed(seed)
 
-        with torch.no_grad():
+        with self._pipe_lock, torch.no_grad():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
 

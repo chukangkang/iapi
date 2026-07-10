@@ -2,6 +2,7 @@ import asyncio
 import gc
 import inspect
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -164,6 +165,7 @@ class QwenImageService:
         self._model_name = "qwen_image_2512"
         self._cpu_offload_enabled = False
         self._turbo_lora_active = False
+        self._pipe_lock = threading.Lock()
 
     async def generate(
         self,
@@ -235,7 +237,8 @@ class QwenImageService:
         )
 
         with torch.inference_mode():
-            result = pipe(**kwargs)
+            with self._pipe_lock:
+                result = pipe(**kwargs)
         return result.images[0].convert("RGB")
 
     def _image_argument_name(self, signature) -> Optional[str]:
