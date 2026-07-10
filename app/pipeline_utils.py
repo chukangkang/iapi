@@ -147,3 +147,18 @@ def _call_vae_method(pipe: object, method_name: str) -> bool:
     if vae is None:
         return False
     return _call_first_available(vae, (method_name,))
+
+
+def get_highest_free_cuda_device(torch: Any, gpu_count: int) -> int:
+    """返回逻辑可见 GPU 中空闲显存最多的设备索引。"""
+    best_index = 0
+    best_free = 0
+    for i in range(gpu_count):
+        try:
+            free_bytes, _ = torch.cuda.mem_get_info(i)
+            if free_bytes > best_free:
+                best_free = free_bytes
+                best_index = i
+        except Exception:
+            continue
+    return best_index

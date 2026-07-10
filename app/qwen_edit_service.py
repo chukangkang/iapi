@@ -225,7 +225,8 @@ class QwenImageEditService:
         cpu_offload_enabled = False
         device_map_enabled = uses_pipeline_device_map(pipeline_load_kwargs) or transformer_sharded
         if device_map_enabled:
-            pass
+            if self.settings.qwen_edit_place_cpu_components_on_gpu:
+                self._place_cpu_components_on_gpu(pipe, torch)
         elif apply_pipeline_cpu_offload(pipe, self.settings, self._device):
             cpu_offload_enabled = True
         else:
@@ -389,6 +390,44 @@ class QwenImageEditService:
 
         if cpu_components:
             logger.warning("Qwen Edit components using CPU: %s", ", ".join(sorted(cpu_components)))
+
+    def _place_cpu_components_on_gpu(self, pipe, torch) -> None:
+        """将 VAE 和 text_encoder 从 CPU 移动到空闲显存最多的 GPU。"""
+        from app.pipeline_utils import get_highest_free_cuda_device
+
+        gpu_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
+        target_device = get_highest_free_cuda_device(torch, gpu_count)
+
+        components = getattr(pipe, "components", {}) or {}
+        for name in ("vae", "text_encoder"):
+            component = components.get(name)
+            if component is None:
+                continue
+            if getattr(component, "hf_device_map", None):
+                logger.debug("Qwen Edit component '%s' is device_map-managed, skipping GPU placement", name)
+                continue
+            try:
+                component_device = next(component.parameters()).device
+            except StopIteration:
+                logger.debug("Qwen Edit component '%s' has no parameters, skipping", name)
+                continue
+            if str(component_device) != "cpu":
+                logger.debug("Qwen Edit component '%s' already on %s, skipping", name, component_device)
+                continue
+            try:
+                component.to(f"cuda:{target_device}")
+                logger.info(
+                    "Moved Qwen Edit component '%s' from CPU to cuda:%d (free memory was highest)",
+                    name,
+                    target_device,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to move Qwen Edit component '%s' to cuda:%d: %s",
+                    name,
+                    target_device,
+                    exc,
+                )
 
     def _describe_component_device(self, component: Any) -> Optional[str]:
         for attr_name in ("device", "_device"):
