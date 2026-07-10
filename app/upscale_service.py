@@ -203,18 +203,6 @@ class ImageUpscaleService:
 
         source_ratio = image.width / image.height
         target_ratio = width / height
-        if fit_mode == "cover":
-            if source_ratio > target_ratio:
-                resized_height = height
-                resized_width = int(round(height * source_ratio))
-            else:
-                resized_width = width
-                resized_height = int(round(width / source_ratio))
-            resized = image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
-            left = max(0, (resized_width - width) // 2)
-            top = max(0, (resized_height - height) // 2)
-            return resized.crop((left, top, left + width, top + height))
-
         if source_ratio > target_ratio:
             resized_width = width
             resized_height = int(round(width / source_ratio))

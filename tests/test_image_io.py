@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image
 from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_qwen_edit_dimensions, _validate_image_payload
 from app.config import Settings
+from app.qwen_edit_service import QwenImageEditService
+from app.upscale_service import ImageUpscaleService
 
 
 def _sample_base64_png() -> str:
@@ -85,6 +87,28 @@ def test_qwen_edit_scale_to_length_zero_disables_scaling():
 def test_qwen_edit_scale_to_length_rejects_negative_values():
     with pytest.raises(ValidationError):
         Settings(_env_file=None, qwen_edit_scale_to_length=-1)
+
+
+def test_qwen_edit_cover_fit_preserves_full_image_content():
+    settings = Settings(_env_file=None, qwen_edit_input_fit_mode="cover")
+    service = QwenImageEditService(settings)
+    image = Image.new("RGB", (200, 100), "red")
+
+    prepared = service._prepare_image(image, 100, 100)
+
+    assert prepared.size == (100, 100)
+    assert prepared.getbbox() == (0, 25, 100, 75)
+
+
+def test_upscale_cover_fit_preserves_full_image_content():
+    settings = Settings(_env_file=None, upscale_fit_mode="cover", upscale_fill_color="black")
+    service = ImageUpscaleService(settings)
+    image = Image.new("RGB", (200, 100), "red")
+
+    fitted = service._fit_to_target(image, width=100, height=100, fit_mode="cover")
+
+    assert fitted.size == (100, 100)
+    assert fitted.getbbox() == (0, 25, 100, 75)
 
 
 def test_realesrgan_enhance_mode_allows_empty_model_path_for_default_weights():

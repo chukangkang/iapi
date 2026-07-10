@@ -143,8 +143,6 @@ class QwenImageEditService:
         logger.info("Qwen Edit LoRA loaded")
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
-        if self.settings.qwen_edit_input_fit_mode == "cover":
-            return ImageOps.fit(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         color = self.settings.qwen_edit_background_color
         return ImageOps.pad(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, color=color, centering=(0.5, 0.5))
 

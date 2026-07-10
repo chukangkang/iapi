@@ -248,8 +248,6 @@ class QwenImageService:
         return None
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
-        if self.settings.qwen_edit_input_fit_mode == "cover":
-            return ImageOps.fit(image.convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         return ImageOps.pad(
             image.convert("RGB"),
             (width, height),
