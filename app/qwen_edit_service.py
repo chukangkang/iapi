@@ -173,10 +173,6 @@ class QwenImageEditService:
             self._unload_pipeline()
         
         if self._pipe is not None:
-            logger.debug("Reusing cached Qwen Edit pipeline (model=%s, device_map=%s, cpu_offload=%s)",
-                         self._model_name,
-                         bool(getattr(self._pipe, "hf_device_map", None)),
-                         self._cpu_offload_enabled)
             return self._pipe
 
         self._model_manager.unload_except(current_model)
@@ -192,27 +188,16 @@ class QwenImageEditService:
             load_kwargs["torch_dtype"] = self._dtype
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
-        quantization_config = self._quantization_config(diffusers)
+
+        load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
+        device_map_enabled = uses_pipeline_device_map(load_kwargs)
         transformer_sharded = False
         transformer = None
-        if quantization_config is not None:
-            load_kwargs["quantization_config"] = quantization_config
-            load_kwargs["device_map"] = self.settings.qwen_edit_device_map if self.settings.qwen_edit_device_map != "none" else "cuda"
-        elif self.settings.qwen_edit_multi_gpu_enabled:
-            load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
-            if self.settings.qwen_edit_transformer_sharding_enabled and uses_pipeline_device_map(load_kwargs):
-                transformer = self._load_sharded_transformer(diffusers, torch, load_kwargs)
-                transformer_sharded = transformer is not None
-        else:
-            if self.settings.qwen_edit_device_map != "none":
-                load_kwargs["device_map"] = self.settings.qwen_edit_device_map
-            logger.info(
-                "Qwen Edit multi-GPU loading disabled; loading with %s on device_map=%s device=%s",
-                self.settings.qwen_edit_pipeline_class,
-                load_kwargs.get("device_map"),
-                self._device,
-            )
+        if device_map_enabled:
+            transformer = self._load_sharded_transformer(diffusers, torch, load_kwargs)
+            transformer_sharded = transformer is not None
 
+        model_path = self.settings.qwen_edit_model_path
         pipeline_load_kwargs = load_kwargs.copy()
         if transformer_sharded:
             pipeline_load_kwargs.pop("device_map", None)
@@ -221,16 +206,17 @@ class QwenImageEditService:
             if remaining_max_memory:
                 pipeline_load_kwargs["max_memory"] = remaining_max_memory
                 logger.info("Adjusted Qwen Edit pipeline max_memory after transformer load: %s", remaining_max_memory)
-        pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **pipeline_load_kwargs)
-        cpu_offload_enabled = False
-        device_map_enabled = uses_pipeline_device_map(pipeline_load_kwargs) or transformer_sharded
-        if device_map_enabled:
-            if self.settings.qwen_edit_place_cpu_components_on_gpu:
-                self._place_cpu_components_on_gpu(pipe, torch)
-        elif apply_pipeline_cpu_offload(pipe, self.settings, self._device):
-            cpu_offload_enabled = True
-        else:
+
+        pipe = pipeline_cls.from_pretrained(model_path, **pipeline_load_kwargs)
+
+        device_map_enabled = device_map_enabled or transformer_sharded
+        cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
+        if not cpu_offload_enabled and not device_map_enabled:
             pipe.to(self._device)
+
+        if device_map_enabled:
+            self._move_unsharded_components_to_device(pipe, torch)
+
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
@@ -276,33 +262,6 @@ class QwenImageEditService:
         suffix = Path(model_path).suffix.lower()
         return suffix in {".safetensors", ".ckpt", ".pt", ".pth"}
 
-    def _quantization_config(self, diffusers):
-        if self.settings.qwen_edit_quantization == "none" or self._is_prequantized_model_path():
-            return None
-        pipeline_quantization_config = getattr(diffusers, "PipelineQuantizationConfig", None)
-        if pipeline_quantization_config is not None:
-            if self.settings.qwen_edit_quantization == "8bit":
-                return pipeline_quantization_config(
-                    quant_backend="bitsandbytes_8bit",
-                    quant_kwargs={"load_in_8bit": True, "llm_int8_enable_fp32_cpu_offload": True},
-                )
-            return pipeline_quantization_config(
-                quant_backend="bitsandbytes_4bit",
-                quant_kwargs={"load_in_4bit": True, "bnb_4bit_compute_dtype": self._dtype},
-            )
-
-        try:
-            from transformers import BitsAndBytesConfig
-        except Exception as exc:
-            raise RuntimeError("QWEN_EDIT_QUANTIZATION requires bitsandbytes and a recent diffusers/transformers version.") from exc
-
-        if self.settings.qwen_edit_quantization == "8bit":
-            return BitsAndBytesConfig(load_in_8bit=True)
-        return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self._dtype)
-
-    def _is_prequantized_model_path(self) -> bool:
-        model_path = Path(self.settings.qwen_edit_model_path)
-        return model_path.is_dir() and (model_path / "quantization_info.json").exists()
 
     def _resolve_device(self, torch) -> str:
         if self.settings.device != "auto":
@@ -369,94 +328,44 @@ class QwenImageEditService:
         pipeline_device_map = getattr(pipe, "hf_device_map", None)
         if pipeline_device_map:
             logger.info("Qwen Edit pipeline device map: %s", pipeline_device_map)
+        transformer = getattr(pipe, "transformer", None)
+        transformer_device_map = getattr(transformer, "hf_device_map", None)
+        if transformer_device_map:
+            per_device: dict[str, int] = {}
+            for device in transformer_device_map.values():
+                key = str(device)
+                per_device[key] = per_device.get(key, 0) + 1
+            summary = ", ".join(f"{device}={count}" for device, count in sorted(per_device.items(), key=lambda item: item[0]))
+            logger.info("Qwen Edit transformer device map: %s", summary)
+
+    def _move_unsharded_components_to_device(self, pipe, torch) -> None:
+        """将未被 device_map 管理的组件移到显存使用最少的 GPU。"""
         components = getattr(pipe, "components", {}) or {}
-        cpu_components: list[str] = []
         for name, component in components.items():
-            component_device_map = getattr(component, "hf_device_map", None)
-            if component_device_map:
-                logger.info("Qwen Edit component '%s' device map: %s", name, component_device_map)
-                summary = self._summarize_device_map(component_device_map)
-                if summary:
-                    logger.info("Qwen Edit component '%s' placement summary: %s", name, summary)
-                if self._device_map_uses_cpu(component_device_map):
-                    cpu_components.append(name)
-                continue
-
-            component_device = self._describe_component_device(component)
-            if component_device:
-                logger.info("Qwen Edit component '%s' device: %s", name, component_device)
-                if component_device == "cpu":
-                    cpu_components.append(name)
-
-        if cpu_components:
-            logger.warning("Qwen Edit components using CPU: %s", ", ".join(sorted(cpu_components)))
-
-    def _place_cpu_components_on_gpu(self, pipe, torch) -> None:
-        """将 VAE 和 text_encoder 从 CPU 移动到空闲显存最多的 GPU。"""
-        from app.pipeline_utils import get_highest_free_cuda_device
-
-        gpu_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
-        target_device = get_highest_free_cuda_device(torch, gpu_count)
-
-        components = getattr(pipe, "components", {}) or {}
-        for name in ("vae", "text_encoder"):
-            component = components.get(name)
-            if component is None:
+            if not isinstance(component, torch.nn.Module):
                 continue
             if getattr(component, "hf_device_map", None):
-                logger.debug("Qwen Edit component '%s' is device_map-managed, skipping GPU placement", name)
                 continue
+            target_device = self._least_used_cuda_device(torch)
             try:
-                component_device = next(component.parameters()).device
-            except StopIteration:
-                logger.debug("Qwen Edit component '%s' has no parameters, skipping", name)
-                continue
-            if str(component_device) != "cpu":
-                logger.debug("Qwen Edit component '%s' already on %s, skipping", name, component_device)
-                continue
-            try:
-                component.to(f"cuda:{target_device}")
-                logger.info(
-                    "Moved Qwen Edit component '%s' from CPU to cuda:%d (free memory was highest)",
-                    name,
-                    target_device,
-                )
+                component.to(target_device)
+                logger.info("Moved Qwen Edit component '%s' to %s", name, target_device)
             except Exception as exc:
-                logger.warning(
-                    "Failed to move Qwen Edit component '%s' to cuda:%d: %s",
-                    name,
-                    target_device,
-                    exc,
-                )
+                logger.debug("Failed to move Qwen Edit component '%s' to %s: %s", name, target_device, exc)
 
-    def _describe_component_device(self, component: Any) -> Optional[str]:
-        for attr_name in ("device", "_device"):
-            device = getattr(component, attr_name, None)
-            if device is None:
-                continue
-            return str(device)
-
-        for parameter_getter in ("parameters", "buffers"):
-            getter = getattr(component, parameter_getter, None)
-            if not callable(getter):
-                continue
+    def _least_used_cuda_device(self, torch) -> str:
+        if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
+            return self._device
+        device_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
+        if device_count <= 1:
+            return self._device
+        memory_by_device: list[tuple[int, int]] = []
+        for index in range(device_count):
             try:
-                first_value = next(getter())
-            except (StopIteration, TypeError):
-                continue
-            except Exception:
-                return None
-            device = getattr(first_value, "device", None)
-            if device is not None:
-                return str(device)
-        return None
-
-    def _device_map_uses_cpu(self, device_map: dict[str, Any]) -> bool:
-        return any(str(device).lower() == "cpu" for device in device_map.values())
-
-    def _summarize_device_map(self, device_map: dict[str, Any]) -> str:
-        per_device: dict[str, int] = {}
-        for device in device_map.values():
-            key = str(device)
-            per_device[key] = per_device.get(key, 0) + 1
-        return ", ".join(f"{device}={count}" for device, count in sorted(per_device.items(), key=lambda item: item[0]))
+                memory_by_device.append((torch.cuda.memory_allocated(index), index))
+            except Exception as exc:
+                logger.debug("Failed to read allocated memory for cuda:%s: %s", index, exc)
+        if not memory_by_device:
+            return self._device
+        _, device_index = min(memory_by_device)
+        return f"cuda:{device_index}"
