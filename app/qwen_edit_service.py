@@ -181,16 +181,11 @@ class QwenImageEditService:
         if self.settings.hf_token and not self.settings.hf_token.startswith("replace-with"):
             load_kwargs["token"] = self.settings.hf_token
         quantization_config = self._quantization_config(diffusers)
-        transformer_sharded = False
-        transformer = None
         if quantization_config is not None:
             load_kwargs["quantization_config"] = quantization_config
             load_kwargs["device_map"] = self.settings.qwen_edit_device_map if self.settings.qwen_edit_device_map != "none" else "cuda"
         elif self.settings.qwen_edit_multi_gpu_enabled:
             load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
-            if uses_pipeline_device_map(load_kwargs):
-                transformer = self._load_sharded_transformer(diffusers, torch, load_kwargs)
-                transformer_sharded = transformer is not None
         else:
             if self.settings.qwen_edit_device_map != "none":
                 load_kwargs["device_map"] = self.settings.qwen_edit_device_map
@@ -202,16 +197,9 @@ class QwenImageEditService:
             )
 
         pipeline_load_kwargs = load_kwargs.copy()
-        if transformer_sharded:
-            pipeline_load_kwargs["transformer"] = transformer
-            remaining_max_memory = get_remaining_cuda_max_memory(self.settings, torch, reserve_gib=2)
-            if remaining_max_memory:
-                pipeline_load_kwargs["max_memory"] = remaining_max_memory
-                logger.info("Adjusted Qwen Edit pipeline max_memory after transformer load: %s", remaining_max_memory)
-
         pipe = pipeline_cls.from_pretrained(self.settings.qwen_edit_model_path, **pipeline_load_kwargs)
         cpu_offload_enabled = False
-        device_map_enabled = uses_pipeline_device_map(pipeline_load_kwargs) or transformer_sharded
+        device_map_enabled = uses_pipeline_device_map(pipeline_load_kwargs)
         if device_map_enabled:
             pass
         elif apply_pipeline_cpu_offload(pipe, self.settings, self._device):
@@ -232,32 +220,6 @@ class QwenImageEditService:
         self._model_manager.activate_model(self._model_name)
         
         return pipe
-
-    def _load_sharded_transformer(self, diffusers: Any, torch: Any, load_kwargs: dict[str, Any]) -> Optional[Any]:
-        transformer_cls = getattr(diffusers, "QwenImageTransformer2DModel", None)
-        if transformer_cls is None:
-            logger.warning("QwenImageTransformer2DModel is unavailable; falling back to pipeline-level device_map")
-            return None
-        if self._looks_like_single_file(self.settings.qwen_edit_model_path):
-            logger.warning("Single-file Qwen Edit model cannot load transformer subfolder separately; falling back to pipeline-level device_map")
-            return None
-
-        transformer_kwargs = load_kwargs.copy()
-        transformer_kwargs["device_map"] = transformer_kwargs.get("device_map", "balanced")
-        logger.info(
-            "Loading Qwen Edit transformer with layer-level multi-GPU sharding: device_map=%s max_memory=%s",
-            transformer_kwargs.get("device_map"),
-            transformer_kwargs.get("max_memory"),
-        )
-        transformer = transformer_cls.from_pretrained(
-            self.settings.qwen_edit_model_path,
-            subfolder="transformer",
-            **transformer_kwargs,
-        )
-        device_map = getattr(transformer, "hf_device_map", None)
-        if device_map:
-            logger.info("Qwen Edit transformer device map: %s", device_map)
-        return transformer
 
     def _looks_like_single_file(self, model_path: str) -> bool:
         suffix = Path(model_path).suffix.lower()
@@ -357,7 +319,55 @@ class QwenImageEditService:
         if pipeline_device_map:
             logger.info("Qwen Edit pipeline device map: %s", pipeline_device_map)
         components = getattr(pipe, "components", {}) or {}
+        cpu_components: list[str] = []
         for name, component in components.items():
             component_device_map = getattr(component, "hf_device_map", None)
             if component_device_map:
                 logger.info("Qwen Edit component '%s' device map: %s", name, component_device_map)
+                summary = self._summarize_device_map(component_device_map)
+                if summary:
+                    logger.info("Qwen Edit component '%s' placement summary: %s", name, summary)
+                if self._device_map_uses_cpu(component_device_map):
+                    cpu_components.append(name)
+                continue
+
+            component_device = self._describe_component_device(component)
+            if component_device:
+                logger.info("Qwen Edit component '%s' device: %s", name, component_device)
+                if component_device == "cpu":
+                    cpu_components.append(name)
+
+        if cpu_components:
+            logger.warning("Qwen Edit components using CPU: %s", ", ".join(sorted(cpu_components)))
+
+    def _describe_component_device(self, component: Any) -> Optional[str]:
+        for attr_name in ("device", "_device"):
+            device = getattr(component, attr_name, None)
+            if device is None:
+                continue
+            return str(device)
+
+        for parameter_getter in ("parameters", "buffers"):
+            getter = getattr(component, parameter_getter, None)
+            if not callable(getter):
+                continue
+            try:
+                first_value = next(getter())
+            except (StopIteration, TypeError):
+                continue
+            except Exception:
+                return None
+            device = getattr(first_value, "device", None)
+            if device is not None:
+                return str(device)
+        return None
+
+    def _device_map_uses_cpu(self, device_map: dict[str, Any]) -> bool:
+        return any(str(device).lower() == "cpu" for device in device_map.values())
+
+    def _summarize_device_map(self, device_map: dict[str, Any]) -> str:
+        per_device: dict[str, int] = {}
+        for device in device_map.values():
+            key = str(device)
+            per_device[key] = per_device.get(key, 0) + 1
+        return ", ".join(f"{device}={count}" for device, count in sorted(per_device.items(), key=lambda item: item[0]))
