@@ -128,7 +128,7 @@ class QwenImageEditService:
         return result.images[0].convert("RGB")
 
     def _apply_edit_lora(self, pipe) -> None:
-        """与 QwenImage 2512 一致：fuse_lora + unload_lora_weights，消除 adapter 模式。"""
+        """在 _get_pipeline 内加载 LoRA adapter（不 fuse，避免破坏 device_map 状态）。"""
         if self._edit_lora_active:
             return
         if not self._lora_path:
@@ -149,12 +149,8 @@ class QwenImageEditService:
         pipe.load_lora_weights(self._lora_path, **lora_kwargs)
         if hasattr(pipe, "set_adapters"):
             pipe.set_adapters([adapter_name], adapter_weights=[self._lora_scale])
-        if hasattr(pipe, "fuse_lora"):
-            pipe.fuse_lora(adapter_names=[adapter_name], lora_scale=self._lora_scale)
-        if hasattr(pipe, "unload_lora_weights"):
-            pipe.unload_lora_weights()
         self._edit_lora_active = True
-        logger.info("Qwen Edit LoRA fused into model weights (scale=%.2f)", self._lora_scale)
+        logger.info("Qwen Edit LoRA activated (adapter mode, scale=%.2f)", self._lora_scale)
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
         if self.settings.qwen_edit_input_fit_mode == "cover":
@@ -349,12 +345,19 @@ class QwenImageEditService:
                 continue
             if getattr(component, "hf_device_map", None):
                 continue
+            try:
+                current_device = str(next(component.parameters()).device)
+            except StopIteration:
+                current_device = "no_params"
+            if current_device != "cpu":
+                logger.debug("Qwen Edit component '%s' already on %s, skipping", name, current_device)
+                continue
             target_device = self._least_used_cuda_device(torch)
             try:
                 component.to(target_device)
                 logger.info("Moved Qwen Edit component '%s' to %s", name, target_device)
             except Exception as exc:
-                logger.debug("Failed to move Qwen Edit component '%s' to %s: %s", name, target_device, exc)
+                logger.warning("Failed to move Qwen Edit component '%s' to %s: %s", name, target_device, exc)
 
     def _least_used_cuda_device(self, torch) -> str:
         if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
