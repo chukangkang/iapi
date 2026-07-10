@@ -123,25 +123,33 @@ class QwenImageEditService:
         if not lora_path:
             if hasattr(pipe, "disable_lora"):
                 pipe.disable_lora()
+            if self._active_adapter is not None:
+                logger.info("LoRA disabled (no lora_path), previous adapter was '%s'", self._active_adapter)
             self._active_adapter = None
             return None
         adapter_name = "qwen_unblur_upscale"
         loaded_adapters = getattr(pipe, "get_list_adapters", lambda: {})()
         adapter_loaded = adapter_name in loaded_adapters or any(adapter_name in names for names in loaded_adapters.values()) if isinstance(loaded_adapters, dict) else False
         if not adapter_loaded:
+            logger.info("Loading LoRA weights from '%s' (weight_name=%s, adapter_name=%s)...", lora_path, lora_weight_name, adapter_name)
             kwargs = {"adapter_name": adapter_name}
             if lora_weight_name:
                 kwargs["weight_name"] = lora_weight_name
             pipe.load_lora_weights(lora_path, **kwargs)
+            logger.info("LoRA weights loaded successfully: adapter='%s', path='%s'", adapter_name, lora_path)
+        else:
+            logger.info("LoRA adapter '%s' already loaded, reusing", adapter_name)
         if self._active_adapter == adapter_name:
             if hasattr(pipe, "set_adapters"):
                 pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
+            logger.debug("LoRA adapter '%s' scale updated to %.2f", adapter_name, lora_scale)
             return adapter_name
         if hasattr(pipe, "set_adapters"):
             pipe.set_adapters([adapter_name], adapter_weights=[lora_scale])
         elif hasattr(pipe, "enable_lora"):
             pipe.enable_lora()
         self._active_adapter = adapter_name
+        logger.info("LoRA adapter '%s' activated with scale=%.2f", adapter_name, lora_scale)
         return adapter_name
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
@@ -165,6 +173,10 @@ class QwenImageEditService:
             self._unload_pipeline()
         
         if self._pipe is not None:
+            logger.debug("Reusing cached Qwen Edit pipeline (model=%s, device_map=%s, cpu_offload=%s)",
+                         self._model_name,
+                         bool(getattr(self._pipe, "hf_device_map", None)),
+                         self._cpu_offload_enabled)
             return self._pipe
 
         self._model_manager.unload_except(current_model)
