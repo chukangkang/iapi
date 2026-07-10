@@ -115,6 +115,15 @@ class QwenImageEditService:
         if adapter_name and "cross_attention_kwargs" in signature:
             kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
 
+        # 推理前确保未分片的组件在 GPU 上（LoRA 加载可能重新分配了设备）
+        if getattr(self._pipe, "hf_device_map", None) or any(
+            getattr(c, "hf_device_map", None)
+            for c in (getattr(pipe, "components", {}) or {}).values()
+        ):
+            self._move_unsharded_components_to_device(pipe, torch)
+            # 确认关键组件设备
+            self._verify_component_devices(pipe)
+
         with torch.no_grad():
             result = pipe(**kwargs)
         return result.images[0].convert("RGB")
@@ -213,10 +222,8 @@ class QwenImageEditService:
         cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
         if not cpu_offload_enabled and not device_map_enabled:
             pipe.to(self._device)
-
-        if device_map_enabled:
-            self._move_unsharded_components_to_device(pipe, torch)
-
+        # 不在 _get_pipeline 中移动组件到 GPU，因为后续 _ensure_lora 的 load_lora_weights
+        # 耗时较长且可能内部重新分配设备。改为在 _edit_sync 推理前执行。
         apply_pipeline_memory_settings(pipe, self.settings)
         if hasattr(pipe, "set_progress_bar_config"):
             pipe.set_progress_bar_config(disable=True)
@@ -369,3 +376,24 @@ class QwenImageEditService:
             return self._device
         _, device_index = min(memory_by_device)
         return f"cuda:{device_index}"
+
+    def _verify_component_devices(self, pipe) -> None:
+        """推理前验证关键组件确实在 GPU 上。"""
+        components = getattr(pipe, "components", {}) or {}
+        for name in ("vae", "text_encoder", "transformer"):
+            component = components.get(name)
+            if component is None:
+                continue
+            if getattr(component, "hf_device_map", None):
+                continue
+            try:
+                device = str(next(component.parameters()).device)
+            except StopIteration:
+                device = "no_params"
+            if device == "cpu":
+                logger.warning(
+                    "Qwen Edit component '%s' is still on CPU before inference! This will cause slow generation.",
+                    name,
+                )
+            else:
+                logger.debug("Qwen Edit component '%s' on %s before inference", name, device)
