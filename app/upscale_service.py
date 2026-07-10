@@ -252,7 +252,26 @@ class ImageUpscaleService:
         supported = ", ".join(sorted(spec.name for spec in REALESRGAN_MODELS.values()))
         raise ValueError(f"Unsupported REALESRGAN_MODEL_NAME={raw_name!r}. Supported models: {supported}")
 
+    def _fix_meta_params(self, model, model_path) -> None:
+        """检测并修复 accelerate device_map 残留导致的 meta device 参数。"""
+        try:
+            import torch
+            first_param = next(model.parameters())
+        except (ImportError, StopIteration):
+            return
+        if first_param.device.type != "meta":
+            return
+        logger.info("RealESRGAN model has meta params (from pipeline device_map), reloading weights to CPU")
+        state_dict = torch.load(str(model_path), map_location="cpu")
+        model.load_state_dict(state_dict, strict=True)
+
     def _get_upsampler(self, realesrganer, rrdbnet, srvggnet, load_file_from_url, model_path: Path, spec: RealESRGANModelSpec):
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
         model_path, model_paths = self._ensure_model_paths(model_path, spec, load_file_from_url)
         upsampler_key = (
             tuple(model_paths) if isinstance(model_paths, list) else model_paths,
@@ -267,6 +286,10 @@ class ImageUpscaleService:
             return self._upsampler
 
         model = self._build_model(rrdbnet, srvggnet, spec)
+        # 如果 pipeline device_map 残留了 meta device 状态，模型参数会在 meta 上。
+        # RealESRGANer.__init__ 的 model.to(device) 对此会报 "Cannot copy out of meta tensor"。
+        self._fix_meta_params(model, model_path)
+
         upsampler_kwargs = {
             "scale": spec.scale,
             "model_path": model_paths,
