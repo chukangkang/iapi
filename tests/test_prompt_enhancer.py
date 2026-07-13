@@ -83,6 +83,53 @@ def test_responses_interface_extracts_nested_output_text(monkeypatch):
     assert PromptEnhancer(settings)._enhance_sync("一只猫") == "窗边的橘猫"
 
 
+def test_responses_payload_disables_reasoning_and_requests_concise_output():
+    settings = Settings(_env_file=None, prompt_enhancer_api_type="responses")
+
+    payload = PromptEnhancer(settings)._build_responses_payload("用户提示词：一只猫")
+
+    assert payload["reasoning"] == {"effort": "none"}
+    assert payload["enable_thinking"] is False
+    assert payload["text"]["verbosity"] == "low"
+    assert "format" not in payload["text"]
+
+
+def test_responses_interface_salvages_truncated_expanded_prompt(monkeypatch, caplog):
+    def fake_urlopen(request, timeout):
+        return FakeHttpResponse(
+            {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": '{"expanded_prompt":"未结束'}],
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr("app.prompt_enhancer.urlopen", fake_urlopen)
+    settings = Settings(
+        _env_file=None,
+        prompt_enhancer_base_url="http://text.example/v1",
+        prompt_enhancer_model="qwen3.6-27b",
+        prompt_enhancer_api_type="responses",
+    )
+
+    with caplog.at_level("WARNING"):
+        result = PromptEnhancer(settings)._enhance_sync("一只猫")
+
+    assert result == "未结束"
+    assert "status=incomplete reason=max_output_tokens" in caplog.text
+
+
+def test_parser_accepts_plain_text_from_compatible_providers():
+    content = "傍晚海边，女孩站在潮湿沙滩上，柔和逆光。"
+
+    assert PromptEnhancer._parse_expanded_prompt(content) == content
+
+
 @pytest.mark.asyncio
 async def test_enhancer_failure_falls_back_to_original_prompt(monkeypatch):
     def fail_urlopen(request, timeout):

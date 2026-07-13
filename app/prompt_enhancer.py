@@ -18,7 +18,7 @@ SYSTEM_PROMPT = """你是 Qwen-Image 图像生成提示词优化器。
 不得添加原提示词中不存在的人物、物体、品牌、文字或剧情。
 不要输出负面提示词，不要堆砌“杰作、8K、最佳质量”等标签。
 扩写结果控制在 300 至 600 个中文字符以内；简单场景可更短。
-只输出严格 JSON，格式为 {"expanded_prompt":"扩写后的完整提示词"}，不要输出解释或 Markdown。"""
+只输出扩写后的完整提示词正文，不要输出 JSON、标题、解释、思考过程或 Markdown。"""
 
 
 class PromptEnhancer:
@@ -65,6 +65,12 @@ class PromptEnhancer:
         with urlopen(request, timeout=self.settings.prompt_enhancer_timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
         content = self._extract_chat_text(body) if api_type == "chat" else self._extract_responses_text(body)
+        if body.get("status") == "incomplete":
+            details = body.get("incomplete_details") or {}
+            logger.warning(
+                "Prompt enhancer returned partial output: status=incomplete reason=%s",
+                details.get("reason", "unknown"),
+            )
         expanded_prompt = self._parse_expanded_prompt(content)
         if not expanded_prompt:
             raise ValueError("Prompt enhancer returned an empty expanded_prompt")
@@ -97,7 +103,7 @@ class PromptEnhancer:
             ],
             "temperature": self.settings.prompt_enhancer_temperature,
             "max_tokens": self.settings.prompt_enhancer_max_tokens,
-            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
             "stream": False,
         }
 
@@ -108,7 +114,9 @@ class PromptEnhancer:
             "input": user_input,
             "temperature": self.settings.prompt_enhancer_temperature,
             "max_output_tokens": self.settings.prompt_enhancer_max_tokens,
-            "text": {"format": {"type": "json_object"}},
+            "reasoning": {"effort": "none"},
+            "enable_thinking": False,
+            "text": {"verbosity": "low"},
             "stream": False,
         }
 
@@ -152,10 +160,17 @@ class PromptEnhancer:
         fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", value, flags=re.DOTALL | re.IGNORECASE)
         if fenced:
             value = fenced.group(1)
+        if not value:
+            return ""
+        if not value.startswith("{"):
+            return value
         try:
             parsed = json.loads(value)
-        except json.JSONDecodeError as exc:
-            raise ValueError("Prompt enhancer did not return valid JSON") from exc
+        except json.JSONDecodeError:
+            truncated = re.match(r'^\s*\{\s*"expanded_prompt"\s*:\s*"(.*)$', value, flags=re.DOTALL)
+            if truncated:
+                return truncated.group(1).rstrip('"}').strip()
+            raise ValueError("Prompt enhancer returned malformed JSON without a recoverable expanded_prompt")
         if not isinstance(parsed, dict) or not isinstance(parsed.get("expanded_prompt"), str):
             raise ValueError("Prompt enhancer JSON is missing expanded_prompt")
         return parsed["expanded_prompt"].strip()
