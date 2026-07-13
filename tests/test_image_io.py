@@ -111,6 +111,23 @@ def test_qwen_edit_cover_fit_fills_target_without_black_bars():
     assert prepared.getpixel((50, 0)) == (255, 0, 0)
 
 
+def test_qwen_edit_alignment_corrects_enhanced_image_translation():
+    settings = Settings(_env_file=None, qwen_unblur_upscale_alignment_enabled=True)
+    service = QwenImageEditService(settings)
+    reference = Image.new("RGB", (160, 120), "black")
+    for x in range(35, 125):
+        for y in range(25, 95):
+            reference.putpixel((x, y), (220, 180, 120))
+    shifted = Image.new("RGB", reference.size, "black")
+    shifted.paste(reference.crop((0, 0, 154, 116)), (6, 4))
+
+    aligned = service.align_to_reference(shifted, reference)
+
+    assert aligned.size == reference.size
+    assert aligned.getpixel((35, 25)) == reference.getpixel((35, 25))
+    assert aligned.getpixel((124, 94)) == reference.getpixel((124, 94))
+
+
 def test_upscale_cover_fit_fills_target_without_black_bars():
     settings = Settings(_env_file=None, upscale_fit_mode="cover", upscale_fill_color="black")
     service = ImageUpscaleService(settings)

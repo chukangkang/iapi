@@ -159,6 +159,90 @@ class QwenImageEditService:
             return [self._prepare_image(item, width, height) for item in image]
         return self._prepare_image(image, width, height)
 
+    def align_to_reference(self, image: Image.Image, reference: Image.Image) -> Image.Image:
+        if not self.settings.qwen_unblur_upscale_alignment_enabled:
+            return image
+        try:
+            enhanced = image.convert("RGB")
+            target = self._prepare_image(reference, enhanced.width, enhanced.height)
+            max_shift = self.settings.qwen_unblur_upscale_alignment_max_shift
+            shift_x, shift_y, alignment_error = self._estimate_translation(target, enhanced, max_shift)
+            if abs(shift_x) > max_shift or abs(shift_y) > max_shift:
+                logger.warning(
+                    "Skipping Qwen unblur alignment: estimated shift exceeds limit shift=(%.2f, %.2f) limit=%s",
+                    shift_x,
+                    shift_y,
+                    max_shift,
+                )
+                return enhanced
+            aligned = target.copy()
+            source_left = max(0, -shift_x)
+            source_top = max(0, -shift_y)
+            destination_left = max(0, shift_x)
+            destination_top = max(0, shift_y)
+            copy_width = min(enhanced.width - source_left, enhanced.width - destination_left)
+            copy_height = min(enhanced.height - source_top, enhanced.height - destination_top)
+            if copy_width <= 0 or copy_height <= 0:
+                return enhanced
+            aligned.paste(
+                enhanced.crop((source_left, source_top, source_left + copy_width, source_top + copy_height)),
+                (destination_left, destination_top),
+            )
+            logger.info(
+                "Aligned Qwen unblur output to source: shift=(%s, %s) alignment_error=%.4f",
+                shift_x,
+                shift_y,
+                alignment_error,
+            )
+            return aligned
+        except Exception as exc:
+            logger.warning("Qwen unblur output alignment failed; using unaligned image: %s", exc)
+            return image
+
+    @staticmethod
+    def _estimate_translation(target: Image.Image, enhanced: Image.Image, max_shift: int) -> tuple[int, int, float]:
+        scale = min(1.0, 1024 / max(target.width, target.height))
+        sample_size = (max(16, round(target.width * scale)), max(16, round(target.height * scale)))
+        target_sample = target.convert("L").resize(sample_size, Image.Resampling.BILINEAR)
+        enhanced_sample = enhanced.convert("L").resize(sample_size, Image.Resampling.BILINEAR)
+        target_columns, target_rows = QwenImageEditService._edge_projections(target_sample)
+        enhanced_columns, enhanced_rows = QwenImageEditService._edge_projections(enhanced_sample)
+        sample_max_shift = max(1, round(max_shift * scale)) if max_shift else 0
+        sample_shift_x, error_x = QwenImageEditService._best_projection_shift(
+            target_columns, enhanced_columns, sample_max_shift
+        )
+        sample_shift_y, error_y = QwenImageEditService._best_projection_shift(
+            target_rows, enhanced_rows, sample_max_shift
+        )
+        return round(sample_shift_x / scale), round(sample_shift_y / scale), (error_x + error_y) / 2
+
+    @staticmethod
+    def _edge_projections(image: Image.Image) -> tuple[list[float], list[float]]:
+        pixels = image.load()
+        columns = [0.0] * image.width
+        rows = [0.0] * image.height
+        for y in range(1, image.height):
+            for x in range(1, image.width):
+                value = abs(pixels[x, y] - pixels[x - 1, y]) + abs(pixels[x, y] - pixels[x, y - 1])
+                columns[x] += value
+                rows[y] += value
+        return columns, rows
+
+    @staticmethod
+    def _best_projection_shift(target: list[float], enhanced: list[float], max_shift: int) -> tuple[int, float]:
+        best_shift = 0
+        best_error = float("inf")
+        for shift in range(-max_shift, max_shift + 1):
+            start = max(0, shift)
+            end = min(len(target), len(enhanced) + shift)
+            if end <= start:
+                continue
+            error = sum(abs(target[index] - enhanced[index - shift]) for index in range(start, end)) / (end - start)
+            if error < best_error:
+                best_shift = shift
+                best_error = error
+        return best_shift, best_error
+
     def _get_pipeline(self):
         import torch
 

@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
     qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
+    qwen_unblur_upscale_alignment_enabled: bool = True
+    qwen_unblur_upscale_alignment_max_shift: int = Field(default=64, ge=0)
     pixel_sharpen_enabled: bool = True
     pixel_sharpen_radius: float = Field(default=1.4, ge=0.0)
     pixel_sharpen_percent: int = Field(default=140, ge=0)
