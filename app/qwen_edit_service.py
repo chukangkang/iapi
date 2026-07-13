@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import logging
+import math
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -126,21 +127,64 @@ class QwenImageEditService:
         return result.images[0].convert("RGB")
 
     def _apply_edit_lora(self, pipe) -> None:
-        """按官方教程：pipe.load_lora_weights(path) — 无 adapter_name，无 set_adapters。"""
         if self._edit_lora_active:
-            return
-        if not self._lora_path:
             return
         if not hasattr(pipe, "load_lora_weights"):
             return
 
-        logger.info("Loading Qwen Edit LoRA: path=%s weight=%s", self._lora_path, self._lora_weight_name)
-        load_kwargs = {}
-        if self._lora_weight_name:
-            load_kwargs["weight_name"] = self._lora_weight_name
-        pipe.load_lora_weights(self._lora_path, **load_kwargs)
+        adapter_names = []
+        adapter_weights = []
+        if self.settings.qwen_edit_lightning_lora_enabled:
+            logger.info(
+                "Loading Qwen Edit Lightning LoRA: path=%s weight=%s scale=%s",
+                self.settings.qwen_edit_lightning_lora_path,
+                self.settings.qwen_edit_lightning_lora_weight_name,
+                self.settings.qwen_edit_lightning_lora_scale,
+            )
+            pipe.load_lora_weights(
+                self.settings.qwen_edit_lightning_lora_path,
+                weight_name=self.settings.qwen_edit_lightning_lora_weight_name,
+                adapter_name="qwen_edit_lightning",
+            )
+            adapter_names.append("qwen_edit_lightning")
+            adapter_weights.append(self.settings.qwen_edit_lightning_lora_scale)
+        if self._lora_path:
+            logger.info("Loading Qwen Edit Unblur LoRA: path=%s weight=%s scale=%s", self._lora_path, self._lora_weight_name, self._lora_scale)
+            load_kwargs = {"adapter_name": "qwen_edit_unblur"}
+            if self._lora_weight_name:
+                load_kwargs["weight_name"] = self._lora_weight_name
+            pipe.load_lora_weights(self._lora_path, **load_kwargs)
+            adapter_names.append("qwen_edit_unblur")
+            adapter_weights.append(self._lora_scale)
+        if adapter_names and hasattr(pipe, "set_adapters"):
+            pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
         self._edit_lora_active = True
-        logger.info("Qwen Edit LoRA loaded")
+        logger.info("Qwen Edit LoRA adapters active: %s", adapter_names)
+
+    def _apply_edit_scheduler(self, pipe) -> None:
+        scheduler = getattr(pipe, "scheduler", None)
+        if scheduler is None:
+            logger.warning("Qwen Edit scheduler config skipped: pipeline has no scheduler")
+            return
+        base_shift = self.settings.qwen_edit_scheduler_base_shift
+        scheduler_kwargs = {
+            "base_image_seq_len": 256,
+            "base_shift": base_shift,
+            "invert_sigmas": False,
+            "max_image_seq_len": 8192,
+            "max_shift": base_shift,
+            "num_train_timesteps": 1000,
+            "shift": 1.0,
+            "shift_terminal": None,
+            "stochastic_sampling": False,
+            "time_shift_type": "exponential",
+            "use_beta_sigmas": False,
+            "use_dynamic_shifting": True,
+            "use_exponential_sigmas": False,
+            "use_karras_sigmas": False,
+        }
+        pipe.scheduler = scheduler.__class__.from_config(scheduler.config, **scheduler_kwargs)
+        logger.info("Applied Qwen Edit Lightning scheduler: base_shift=%.4f", base_shift)
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
         image = image.convert("RGB")
@@ -341,6 +385,7 @@ class QwenImageEditService:
         apply_pipeline_memory_settings(pipe, self.settings)
         # LoRA 必须在 _move_unsharded_components_to_device 之前，
         # 因为 load_lora_weights 可能重新分配设备。之后再把 CPU 组件移 GPU。
+        self._apply_edit_scheduler(pipe)
         self._apply_edit_lora(pipe)
         if device_map_enabled:
             self._move_unsharded_components_to_device(pipe, torch)

@@ -611,8 +611,8 @@ async def _run_image_request(
             seed=payload.seed,
             guidance_scale=app_settings.qwen_edit_guidance_scale,
             strength=qwen_strength,
-            lora_path=app_settings.qwen_unblur_upscale_lora_path if is_unblur_upscale else None,
-            lora_weight_name=app_settings.qwen_unblur_upscale_lora_weight_name if is_unblur_upscale else None,
+            lora_path=app_settings.qwen_unblur_upscale_lora_path if is_unblur_upscale and app_settings.qwen_unblur_upscale_lora_enabled else None,
+            lora_weight_name=app_settings.qwen_unblur_upscale_lora_weight_name if is_unblur_upscale and app_settings.qwen_unblur_upscale_lora_enabled else None,
             lora_scale=app_settings.qwen_unblur_upscale_lora_scale,
         )
         if is_unblur_upscale and primary_reference_image is not None:

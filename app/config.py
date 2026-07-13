@@ -59,9 +59,9 @@ class Settings(BaseSettings):
     qwen_image_turbo_scheduler_shift_terminal: float = 0.7155
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
     qwen_edit_pipeline_class: str = "DiffusionPipeline"
-    qwen_edit_steps: int = Field(default=10, ge=1)
+    qwen_edit_steps: int = Field(default=4, ge=1)
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
-    qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
+    qwen_edit_true_cfg_scale: float = Field(default=1.0, ge=0.0)
     qwen_edit_strength: float = Field(default=0.7, ge=0.0, le=1.0)
     qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
     qwen_edit_scale_to_length: int = Field(default=2048, ge=0)
@@ -72,12 +72,18 @@ class Settings(BaseSettings):
     qwen_edit_device_map: Literal["none", "balanced", "cuda", "cpu"] = "none"
     qwen_edit_multi_gpu_enabled: bool = True
     qwen_edit_transformer_sharding_enabled: bool = True
+    qwen_edit_lightning_lora_enabled: bool = True
+    qwen_edit_lightning_lora_path: str = "lightx2v/Qwen-Image-Edit-2511-Lightning"
+    qwen_edit_lightning_lora_weight_name: str = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
+    qwen_edit_lightning_lora_scale: float = Field(default=1.0, ge=0.0)
+    qwen_edit_scheduler_base_shift: float = Field(default=math.log(3), gt=0.0)
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
+    qwen_unblur_upscale_lora_enabled: bool = False
     qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
     qwen_unblur_upscale_alignment_enabled: bool = True
-    qwen_unblur_upscale_alignment_mode: Literal["translation", "dense"] = "dense"
+    qwen_unblur_upscale_alignment_mode: Literal["translation", "dense"] = "translation"
     qwen_unblur_upscale_alignment_max_shift: int = Field(default=64, ge=0)
     qwen_unblur_upscale_alignment_max_side: int = Field(default=1024, ge=128)
     qwen_unblur_upscale_alignment_flow_strength: float = Field(default=1.0, ge=0.0, le=1.0)

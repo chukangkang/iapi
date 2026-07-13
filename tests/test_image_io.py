@@ -82,6 +82,56 @@ def test_qwen_image_2512_uses_official_defaults():
     )
 
 
+def test_qwen_unblur_defaults_match_low_distortion_lightning_workflow():
+    settings = Settings(_env_file=None)
+
+    assert settings.qwen_edit_steps == 4
+    assert settings.qwen_edit_guidance_scale == 1.0
+    assert settings.qwen_edit_true_cfg_scale == 1.0
+    assert settings.qwen_edit_scale_to_length == 2048
+    assert settings.qwen_edit_input_fit_mode == "contain"
+    assert settings.qwen_edit_lightning_lora_enabled is True
+    assert settings.qwen_edit_lightning_lora_scale == 1.0
+    assert settings.qwen_edit_scheduler_base_shift == pytest.approx(1.0986122886681098)
+    assert settings.qwen_unblur_upscale_alignment_mode == "translation"
+
+
+def test_qwen_edit_applies_lightning_lora_and_scheduler():
+    class FakeScheduler:
+        config = {"existing": True}
+
+        @classmethod
+        def from_config(cls, config, **kwargs):
+            instance = cls()
+            instance.applied = kwargs
+            return instance
+
+    class FakePipeline:
+        def __init__(self):
+            self.scheduler = FakeScheduler()
+            self.loaded = []
+            self.adapters = None
+
+        def load_lora_weights(self, path, **kwargs):
+            self.loaded.append((path, kwargs))
+
+        def set_adapters(self, names, adapter_weights):
+            self.adapters = (names, adapter_weights)
+
+    settings = Settings(_env_file=None)
+    service = QwenImageEditService(settings)
+    pipe = FakePipeline()
+
+    service._apply_edit_scheduler(pipe)
+    service._apply_edit_lora(pipe)
+
+    assert pipe.scheduler.applied["base_shift"] == pytest.approx(settings.qwen_edit_scheduler_base_shift)
+    assert pipe.scheduler.applied["max_shift"] == pytest.approx(settings.qwen_edit_scheduler_base_shift)
+    assert pipe.loaded[0][0] == settings.qwen_edit_lightning_lora_path
+    assert pipe.loaded[0][1]["weight_name"] == settings.qwen_edit_lightning_lora_weight_name
+    assert pipe.adapters == (["qwen_edit_lightning"], [1.0])
+
+
 def test_qwen_image_uses_fixed_negative_prompt_from_settings():
     settings = Settings(_env_file=None, qwen_image_negative_prompt="  固定中文负面提示词  ")
 
@@ -128,10 +178,10 @@ def test_qwen_edit_alignment_corrects_enhanced_image_translation():
     assert aligned.getpixel((124, 94)) == reference.getpixel((124, 94))
 
 
-def test_qwen_unblur_alignment_defaults_to_dense_local_warp():
+def test_qwen_unblur_alignment_defaults_to_translation_without_local_warp():
     settings = Settings(_env_file=None)
 
-    assert settings.qwen_unblur_upscale_alignment_mode == "dense"
+    assert settings.qwen_unblur_upscale_alignment_mode == "translation"
     assert settings.qwen_unblur_upscale_alignment_max_side == 1024
     assert settings.qwen_unblur_upscale_alignment_flow_strength == 1.0
 
