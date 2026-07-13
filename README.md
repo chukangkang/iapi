@@ -50,6 +50,7 @@
 - 原提示词会保存在任务载荷和结果元数据中，图片 Worker 使用扩写后的提示词。
 - 默认 `PROMPT_ENHANCER_FALLBACK_TO_ORIGINAL=true`，外部接口异常时继续使用原提示词。
 - 单次请求可传 `prompt_enhance=false` 关闭扩写，或在全局关闭时传 `true` 开启。
+- `PROMPT_ENHANCER_DEFAULT_PERSON_REGION=中国` 会在人物地域未指定时默认描述为中国人物；用户明确指定其他国家、地区或族裔时不会覆盖。设置为空可关闭该规则。
 
 单图图生图示例：
 

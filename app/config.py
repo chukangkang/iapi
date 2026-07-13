@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     prompt_enhancer_temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     prompt_enhancer_max_tokens: int = Field(default=1000, ge=1)
     prompt_enhancer_fallback_to_original: bool = True
+    prompt_enhancer_default_person_region: str = "中国"
     qwen_image_turbo_lora_enabled: bool = False
     qwen_image_turbo_lora_path: str = "Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps"
     qwen_image_turbo_lora_weight_name: str = "Wuli-Qwen-Image-2512-Turbo-LoRA-2steps-V1.0-bf16.safetensors"

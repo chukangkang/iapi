@@ -98,7 +98,7 @@ class PromptEnhancer:
         return {
             "model": self.settings.prompt_enhancer_model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self._system_prompt()},
                 {"role": "user", "content": user_input},
             ],
             "temperature": self.settings.prompt_enhancer_temperature,
@@ -110,7 +110,7 @@ class PromptEnhancer:
     def _build_responses_payload(self, user_input: str) -> dict[str, Any]:
         return {
             "model": self.settings.prompt_enhancer_model,
-            "instructions": SYSTEM_PROMPT,
+            "instructions": self._system_prompt(),
             "input": user_input,
             "temperature": self.settings.prompt_enhancer_temperature,
             "max_output_tokens": self.settings.prompt_enhancer_max_tokens,
@@ -119,6 +119,17 @@ class PromptEnhancer:
             "text": {"verbosity": "low"},
             "stream": False,
         }
+
+    def _system_prompt(self) -> str:
+        region = " ".join(self.settings.prompt_enhancer_default_person_region.split())
+        if not region:
+            return SYSTEM_PROMPT
+        return (
+            f"{SYSTEM_PROMPT}\n"
+            f"当画面包含人物，且用户没有明确指定国家、地区、族裔或人物地域外貌时，默认描述为{region}人物，"
+            f"使用自然、真实、多样的{region}人物面部特征；不得刻板化或夸张化。"
+            "不得覆盖用户明确指定的国家、地区、族裔或人物身份；没有人物时不得添加人物。"
+        )
 
     @staticmethod
     def _build_user_input(prompt: str, aspect_ratio: Optional[str]) -> str:

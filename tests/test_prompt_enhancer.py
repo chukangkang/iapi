@@ -94,6 +94,24 @@ def test_responses_payload_disables_reasoning_and_requests_concise_output():
     assert "format" not in payload["text"]
 
 
+def test_system_prompt_defaults_unspecified_people_to_configured_region():
+    settings = Settings(_env_file=None, prompt_enhancer_default_person_region="中国")
+
+    payload = PromptEnhancer(settings)._build_chat_payload("用户提示词：一名年轻女孩")
+    system_prompt = payload["messages"][0]["content"]
+
+    assert "默认描述为中国人物" in system_prompt
+    assert "不得覆盖用户明确指定的国家、地区、族裔" in system_prompt
+
+
+def test_empty_default_person_region_disables_region_rule():
+    settings = Settings(_env_file=None, prompt_enhancer_default_person_region="")
+
+    payload = PromptEnhancer(settings)._build_chat_payload("用户提示词：一名年轻女孩")
+
+    assert "默认描述为" not in payload["messages"][0]["content"]
+
+
 def test_responses_interface_salvages_truncated_expanded_prompt(monkeypatch, caplog):
     def fake_urlopen(request, timeout):
         return FakeHttpResponse(
