@@ -49,6 +49,8 @@ class ImageGenerationRequest(BaseModel):
     model: Optional[str] = None
     task_id: Optional[str] = None
     prompt: Optional[str] = None
+    original_prompt: Optional[str] = None
+    prompt_enhance: Optional[bool] = None
     negative_prompt: Optional[str] = None
     image: Optional[str | list[str]] = None
     n: int = Field(default=1, ge=1, le=1)
@@ -152,6 +154,7 @@ _qwen_image_service: Optional[Any] = None
 _qwen_edit_service: Optional[Any] = None
 _upscale_service: Optional[Any] = None
 _storage: Optional[ImageStorage] = None
+_prompt_enhancer: Optional[Any] = None
 
 
 def _get_qwen_image_service() -> Any:
@@ -192,6 +195,15 @@ def _get_storage() -> ImageStorage:
     if _storage is None:
         _storage = ImageStorage(settings)
     return _storage
+
+
+def _get_prompt_enhancer(app_settings: Settings) -> Any:
+    from app.prompt_enhancer import PromptEnhancer
+
+    global _prompt_enhancer
+    if _prompt_enhancer is None or _prompt_enhancer.settings is not app_settings:
+        _prompt_enhancer = PromptEnhancer(app_settings)
+    return _prompt_enhancer
 
 
 async def _run_task_payload(payload: object, reference_image) -> ImageResponse:
@@ -247,6 +259,7 @@ def _validate_runtime_settings(app_settings: Settings) -> None:
         raise RuntimeError("SERVICE_ROLE=api requires TASK_QUEUE_BACKEND=redis; memory queue has no local worker.")
     if app_settings.service_role == "worker":
         raise RuntimeError("SERVICE_ROLE=worker should be started with `python -m app.worker`, not uvicorn app.main:app.")
+    _get_prompt_enhancer(app_settings).validate_configuration()
 
 
 @app.get("/health")
@@ -375,6 +388,7 @@ async def _submit_image_task(payload: ImageGenerationRequest, reference_image, a
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="SERVICE_ROLE=api requires TASK_QUEUE_BACKEND=redis; memory queue has no worker in api-only mode.",
         )
+    await _enhance_image_prompt(payload, app_settings)
     try:
         task = await _task_manager.submit(payload, reference_image)
     except asyncio.QueueFull as exc:
@@ -490,6 +504,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             model=_optional_str(form.get("model")),
             task_id=_optional_str(form.get("task_id")),
             prompt=str(form.get("prompt") or ""),
+            prompt_enhance=_optional_bool(form.get("prompt_enhance")),
             negative_prompt=_optional_str(form.get("negative_prompt")),
             image=image_value,
             n=int(form.get("n") or 1),
@@ -535,11 +550,12 @@ async def _run_image_request(
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
     face_enhance = _resolve_face_enhance(payload, app_settings)
     prompt = (payload.prompt or "").strip()
-    negative_prompt = payload.negative_prompt.strip() if payload.negative_prompt else None
+    negative_prompt = _resolve_negative_prompt(app_settings)
     metadata = {
         "enhance_mode": enhance_mode,
         "prompt": prompt,
-        "original_prompt": payload.prompt,
+        "original_prompt": payload.original_prompt or payload.prompt,
+        "prompt_enhanced": payload.original_prompt is not None,
         "target_width": output_width,
         "target_height": output_height,
         "source_width": primary_reference_image.width if primary_reference_image is not None else None,
@@ -920,6 +936,24 @@ def _resolve_upscale_fit_mode(payload: ImageGenerationRequest, app_settings: Set
 
 def _resolve_face_enhance(payload: ImageGenerationRequest, app_settings: Settings) -> bool:
     return payload.face_enhance if payload.face_enhance is not None else app_settings.realesrgan_face_enhance
+
+
+def _resolve_negative_prompt(app_settings: Settings) -> Optional[str]:
+    return app_settings.qwen_image_negative_prompt.strip() or None
+
+
+async def _enhance_image_prompt(payload: ImageGenerationRequest, app_settings: Settings) -> None:
+    should_enhance = payload.prompt_enhance if payload.prompt_enhance is not None else app_settings.prompt_enhancer_enabled
+    if not should_enhance or not payload.prompt:
+        return
+    original_prompt = payload.prompt.strip()
+    expanded_prompt = await _get_prompt_enhancer(app_settings).enhance(
+        original_prompt,
+        aspect_ratio=payload.aspect_ratio,
+    )
+    if expanded_prompt != original_prompt:
+        payload.original_prompt = original_prompt
+        payload.prompt = expanded_prompt
 
 
 def _apply_prompt_params(payload: ImageGenerationRequest) -> None:

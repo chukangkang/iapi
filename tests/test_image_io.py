@@ -4,7 +4,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image
-from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_qwen_edit_dimensions, _validate_image_payload
+from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_negative_prompt, _resolve_qwen_edit_dimensions, _validate_image_payload
 from app.config import Settings
 from app.qwen_edit_service import QwenImageEditService
 from app.upscale_service import ImageUpscaleService
@@ -76,6 +76,16 @@ def test_qwen_image_2512_uses_official_defaults():
     assert settings.qwen_image_model_path == "Qwen/Qwen-Image-2512"
     assert settings.qwen_image_steps == 50
     assert settings.qwen_image_true_cfg_scale == 4.0
+    assert settings.qwen_image_negative_prompt == (
+        "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，"
+        "过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲。"
+    )
+
+
+def test_qwen_image_uses_fixed_negative_prompt_from_settings():
+    settings = Settings(_env_file=None, qwen_image_negative_prompt="  固定中文负面提示词  ")
+
+    assert _resolve_negative_prompt(settings) == "固定中文负面提示词"
 
 
 def test_qwen_edit_scale_to_length_zero_disables_scaling():

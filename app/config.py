@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     qwen_image_model_path: str = "Qwen/Qwen-Image-2512"
     qwen_image_steps: int = Field(default=50, ge=1)
     qwen_image_true_cfg_scale: float = Field(default=4.0, ge=0.0)
+    qwen_image_negative_prompt: str = (
+        "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，"
+        "过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲。"
+    )
+    prompt_enhancer_enabled: bool = False
+    prompt_enhancer_api_type: Literal["chat", "responses"] = "chat"
+    prompt_enhancer_base_url: str = ""
+    prompt_enhancer_api_key: str = ""
+    prompt_enhancer_model: str = "qwen3.6-27b"
+    prompt_enhancer_timeout: float = Field(default=30.0, gt=0.0)
+    prompt_enhancer_temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+    prompt_enhancer_max_tokens: int = Field(default=1000, ge=1)
+    prompt_enhancer_fallback_to_original: bool = True
     qwen_image_turbo_lora_enabled: bool = False
     qwen_image_turbo_lora_path: str = "Wuli-art/Qwen-Image-2512-Turbo-LoRA-2-Steps"
     qwen_image_turbo_lora_weight_name: str = "Wuli-Qwen-Image-2512-Turbo-LoRA-2steps-V1.0-bf16.safetensors"

@@ -27,7 +27,8 @@
 | 字段 | 说明 | 默认值 |
 | --- | --- | --- |
 | `prompt` | 提示词，必填 | - |
-| `negative_prompt` | 反向词；仅使用请求中显式传入的值，底层 pipeline 支持时生效 | `null` |
+| `prompt_enhance` | 单次请求覆盖自动扩写开关；`true` 开启，`false` 关闭 | `.env` 配置 |
+| `negative_prompt` | 请求值会被忽略，统一使用 `QWEN_IMAGE_NEGATIVE_PROMPT` | 固定中文负面提示词 |
 | `image` | 可选参考图；存在时走图生图/编辑流程 | `null` |
 | `aspect_ratio` | generations 使用 Qwen Image 2512 标准比例；edits 可搭配 `resolution=2k/4k` 输出高清尺寸 | `1:1` |
 | `size` / `resolution` | generations 不推荐传；edits 可传 `size=3840x2160` 或 `aspect_ratio=16:9` + `resolution=4k` | `null` |
@@ -36,6 +37,19 @@
 | `response_format` | `url` 或 `b64_json` | `url` |
 | `enhance_mode` | 高清/保真模式：`qwen_image`、`pixel`、`realesrgan`、`qwen_edit`、`qwen_edit_realesrgan`、`qwen_unblur_upscale`、`qwen_unblur_upscale_realesrgan` | `.env` 默认值 |
 | `n` | 当前仅支持 `1` | `1` |
+
+### 正向提示词自动扩写
+
+服务可在任务入队前调用外部 Qwen3.6-27B OpenAI 兼容接口扩写正向提示词。设置
+`PROMPT_ENHANCER_ENABLED=true`，并配置 `PROMPT_ENHANCER_BASE_URL`、
+`PROMPT_ENHANCER_MODEL` 和可选的 `PROMPT_ENHANCER_API_KEY`。
+
+- `PROMPT_ENHANCER_API_TYPE=chat`：请求 `/v1/chat/completions`。
+- `PROMPT_ENHANCER_API_TYPE=responses`：请求 `/v1/responses`。
+- 外部模型应输出 `{"expanded_prompt":"扩写后的完整提示词"}`。
+- 原提示词会保存在任务载荷和结果元数据中，图片 Worker 使用扩写后的提示词。
+- 默认 `PROMPT_ENHANCER_FALLBACK_TO_ORIGINAL=true`，外部接口异常时继续使用原提示词。
+- 单次请求可传 `prompt_enhance=false` 关闭扩写，或在全局关闭时传 `true` 开启。
 
 单图图生图示例：
 
