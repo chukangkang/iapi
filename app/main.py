@@ -955,6 +955,14 @@ async def _enhance_image_prompt(payload: ImageGenerationRequest, app_settings: S
     should_enhance = payload.prompt_enhance if payload.prompt_enhance is not None else app_settings.prompt_enhancer_enabled
     if not should_enhance or not payload.prompt:
         return
+    if payload.enhance_mode in {
+        "pixel",
+        "realesrgan",
+        "qwen_unblur_upscale",
+        "qwen_unblur_upscale_realesrgan",
+    }:
+        logger.info("Skipping prompt enhancement for image processing mode: %s", payload.enhance_mode)
+        return
     original_prompt = payload.prompt.strip()
     expanded_prompt = await _get_prompt_enhancer(app_settings).enhance(
         original_prompt,

@@ -205,3 +205,33 @@ async def test_request_can_disable_prompt_enhancement(monkeypatch):
 
     assert payload.original_prompt is None
     assert payload.prompt == "保留原文"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "enhance_mode",
+    [
+        "pixel",
+        "realesrgan",
+        "qwen_unblur_upscale",
+        "qwen_unblur_upscale_realesrgan",
+    ],
+)
+async def test_image_processing_modes_skip_prompt_enhancement(monkeypatch, enhance_mode):
+    def unexpected_enhancer(settings):
+        raise AssertionError("enhancer should not be called for image processing modes")
+
+    monkeypatch.setattr("app.main._get_prompt_enhancer", unexpected_enhancer)
+    payload = ImageGenerationRequest(
+        prompt="unblur and upscale",
+        image="placeholder",
+        enhance_mode=enhance_mode,
+        prompt_enhance=True,
+        resolution="4k",
+    )
+    settings = Settings(_env_file=None, prompt_enhancer_enabled=True)
+
+    await _enhance_image_prompt(payload, settings)
+
+    assert payload.original_prompt is None
+    assert payload.prompt == "unblur and upscale"
