@@ -128,6 +128,14 @@ def test_qwen_edit_alignment_corrects_enhanced_image_translation():
     assert aligned.getpixel((124, 94)) == reference.getpixel((124, 94))
 
 
+def test_qwen_unblur_alignment_defaults_to_dense_local_warp():
+    settings = Settings(_env_file=None)
+
+    assert settings.qwen_unblur_upscale_alignment_mode == "dense"
+    assert settings.qwen_unblur_upscale_alignment_max_side == 1024
+    assert settings.qwen_unblur_upscale_alignment_flow_strength == 1.0
+
+
 def test_upscale_cover_fit_fills_target_without_black_bars():
     settings = Settings(_env_file=None, upscale_fit_mode="cover", upscale_fill_color="black")
     service = ImageUpscaleService(settings)

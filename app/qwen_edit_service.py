@@ -165,6 +165,10 @@ class QwenImageEditService:
         try:
             enhanced = image.convert("RGB")
             target = self._prepare_image(reference, enhanced.width, enhanced.height)
+            if self.settings.qwen_unblur_upscale_alignment_mode == "dense":
+                densely_aligned = self._align_dense_flow(enhanced, target)
+                if densely_aligned is not None:
+                    return densely_aligned
             max_shift = self.settings.qwen_unblur_upscale_alignment_max_shift
             shift_x, shift_y, alignment_error = self._estimate_translation(target, enhanced, max_shift)
             if abs(shift_x) > max_shift or abs(shift_y) > max_shift:
@@ -198,6 +202,48 @@ class QwenImageEditService:
         except Exception as exc:
             logger.warning("Qwen unblur output alignment failed; using unaligned image: %s", exc)
             return image
+
+    def _align_dense_flow(self, enhanced: Image.Image, target: Image.Image) -> Optional[Image.Image]:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            logger.warning("Dense Qwen unblur alignment requires opencv-python and numpy; falling back to translation")
+            return None
+
+        max_side = self.settings.qwen_unblur_upscale_alignment_max_side
+        scale = min(1.0, max_side / max(enhanced.width, enhanced.height))
+        sample_size = (max(32, round(enhanced.width * scale)), max(32, round(enhanced.height * scale)))
+        target_sample = np.asarray(target.resize(sample_size, Image.Resampling.BILINEAR).convert("L"))
+        enhanced_sample = np.asarray(enhanced.resize(sample_size, Image.Resampling.BILINEAR).convert("L"))
+        flow_estimator = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_MEDIUM)
+        flow_estimator.setUseSpatialPropagation(True)
+        flow = flow_estimator.calc(target_sample, enhanced_sample, None)
+        if scale != 1.0:
+            flow = cv2.resize(flow, (enhanced.width, enhanced.height), interpolation=cv2.INTER_LINEAR) / scale
+        strength = self.settings.qwen_unblur_upscale_alignment_flow_strength
+        flow *= strength
+        max_shift = float(self.settings.qwen_unblur_upscale_alignment_max_shift)
+        np.clip(flow, -max_shift, max_shift, out=flow)
+        grid_x, grid_y = np.meshgrid(
+            np.arange(enhanced.width, dtype=np.float32),
+            np.arange(enhanced.height, dtype=np.float32),
+        )
+        remapped = cv2.remap(
+            np.asarray(enhanced),
+            grid_x + flow[..., 0],
+            grid_y + flow[..., 1],
+            interpolation=cv2.INTER_LANCZOS4,
+            borderMode=cv2.BORDER_REFLECT_101,
+        )
+        magnitudes = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
+        logger.info(
+            "Dense-aligned Qwen unblur output to source: mean_flow=%.2f max_flow=%.2f strength=%.2f",
+            float(magnitudes.mean()),
+            float(magnitudes.max()),
+            strength,
+        )
+        return Image.fromarray(remapped).convert("RGB")
 
     @staticmethod
     def _estimate_translation(target: Image.Image, enhanced: Image.Image, max_shift: int) -> tuple[int, int, float]:
