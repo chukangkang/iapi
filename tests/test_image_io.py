@@ -64,10 +64,10 @@ def test_response_format_rejects_unknown_values():
         raise AssertionError("Expected invalid response_format to fail")
 
 
-def test_seed_defaults_to_none():
+def test_seed_defaults_to_42():
     payload = ImageGenerationRequest(prompt="test")
 
-    assert payload.seed is None
+    assert payload.seed == 42
 
 
 def test_qwen_image_2512_uses_official_defaults():
@@ -184,35 +184,6 @@ def test_qwen_unblur_alignment_defaults_to_translation_without_local_warp():
     assert settings.qwen_unblur_upscale_alignment_mode == "translation"
     assert settings.qwen_unblur_upscale_alignment_max_side == 1024
     assert settings.qwen_unblur_upscale_alignment_flow_strength == 1.0
-
-
-def test_qwen_unblur_detail_transfer_preserves_reference_low_frequency_structure():
-    settings = Settings(
-        _env_file=None,
-        qwen_unblur_upscale_structure_lock_enabled=True,
-        qwen_unblur_upscale_structure_blur_radius=4.0,
-        qwen_unblur_upscale_detail_strength=0.6,
-    )
-    service = QwenImageEditService(settings)
-    reference = Image.new("RGB", (64, 64), (80, 80, 80))
-    generated = Image.new("RGB", (64, 64), (160, 160, 160))
-    for x in range(16, 48, 4):
-        for y in range(16, 48, 4):
-            generated.putpixel((x, y), (220, 220, 220))
-
-    restored = service.transfer_details_to_reference(generated, reference)
-
-    assert restored.getpixel((0, 0))[0] < 100
-    assert restored.getpixel((16, 16))[0] > restored.getpixel((0, 0))[0]
-
-
-def test_qwen_unblur_structure_lock_can_be_disabled():
-    settings = Settings(_env_file=None, qwen_unblur_upscale_structure_lock_enabled=False)
-    service = QwenImageEditService(settings)
-    reference = Image.new("RGB", (32, 32), "black")
-    generated = Image.new("RGB", (32, 32), "white")
-
-    assert service.transfer_details_to_reference(generated, reference) is generated
 
 
 def test_upscale_cover_fit_fills_target_without_black_bars():

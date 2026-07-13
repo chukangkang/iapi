@@ -64,7 +64,7 @@ class ImageGenerationRequest(BaseModel):
     width: Optional[int] = Field(default=None, ge=64)
     height: Optional[int] = Field(default=None, ge=64)
     num_inference_steps: Optional[int] = Field(default=None, ge=1)
-    seed: Optional[int] = 1
+    seed: Optional[int] = 42
     response_format: str = "url"
     enhance_mode: Optional[str] = None
     upscale_fit_mode: Optional[str] = None
@@ -618,10 +618,7 @@ async def _run_image_request(
         if is_unblur_upscale and primary_reference_image is not None:
             qwen_edit_service = _get_qwen_edit_service()
             image = qwen_edit_service.align_to_reference(image, primary_reference_image)
-            image = qwen_edit_service.transfer_details_to_reference(image, primary_reference_image)
             metadata["qwen_unblur_upscale_alignment_enabled"] = app_settings.qwen_unblur_upscale_alignment_enabled
-            metadata["qwen_unblur_upscale_structure_lock_enabled"] = app_settings.qwen_unblur_upscale_structure_lock_enabled
-            metadata["qwen_unblur_upscale_detail_strength"] = app_settings.qwen_unblur_upscale_detail_strength
         upscale_method = "realesrgan" if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} else "pixel"
         image = await _get_upscale_service().upscale(
             image,
