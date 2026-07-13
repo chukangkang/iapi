@@ -186,6 +186,35 @@ def test_qwen_unblur_alignment_defaults_to_translation_without_local_warp():
     assert settings.qwen_unblur_upscale_alignment_flow_strength == 1.0
 
 
+def test_qwen_unblur_detail_transfer_preserves_reference_low_frequency_structure():
+    settings = Settings(
+        _env_file=None,
+        qwen_unblur_upscale_structure_lock_enabled=True,
+        qwen_unblur_upscale_structure_blur_radius=4.0,
+        qwen_unblur_upscale_detail_strength=0.6,
+    )
+    service = QwenImageEditService(settings)
+    reference = Image.new("RGB", (64, 64), (80, 80, 80))
+    generated = Image.new("RGB", (64, 64), (160, 160, 160))
+    for x in range(16, 48, 4):
+        for y in range(16, 48, 4):
+            generated.putpixel((x, y), (220, 220, 220))
+
+    restored = service.transfer_details_to_reference(generated, reference)
+
+    assert restored.getpixel((0, 0))[0] < 100
+    assert restored.getpixel((16, 16))[0] > restored.getpixel((0, 0))[0]
+
+
+def test_qwen_unblur_structure_lock_can_be_disabled():
+    settings = Settings(_env_file=None, qwen_unblur_upscale_structure_lock_enabled=False)
+    service = QwenImageEditService(settings)
+    reference = Image.new("RGB", (32, 32), "black")
+    generated = Image.new("RGB", (32, 32), "white")
+
+    assert service.transfer_details_to_reference(generated, reference) is generated
+
+
 def test_upscale_cover_fit_fills_target_without_black_bars():
     settings = Settings(_env_file=None, upscale_fit_mode="cover", upscale_fill_color="black")
     service = ImageUpscaleService(settings)

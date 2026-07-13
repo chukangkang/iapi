@@ -616,8 +616,12 @@ async def _run_image_request(
             lora_scale=app_settings.qwen_unblur_upscale_lora_scale,
         )
         if is_unblur_upscale and primary_reference_image is not None:
-            image = _get_qwen_edit_service().align_to_reference(image, primary_reference_image)
+            qwen_edit_service = _get_qwen_edit_service()
+            image = qwen_edit_service.align_to_reference(image, primary_reference_image)
+            image = qwen_edit_service.transfer_details_to_reference(image, primary_reference_image)
             metadata["qwen_unblur_upscale_alignment_enabled"] = app_settings.qwen_unblur_upscale_alignment_enabled
+            metadata["qwen_unblur_upscale_structure_lock_enabled"] = app_settings.qwen_unblur_upscale_structure_lock_enabled
+            metadata["qwen_unblur_upscale_detail_strength"] = app_settings.qwen_unblur_upscale_detail_strength
         upscale_method = "realesrgan" if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"} else "pixel"
         image = await _get_upscale_service().upscale(
             image,

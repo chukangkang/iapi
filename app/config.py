@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     qwen_unblur_upscale_alignment_max_shift: int = Field(default=64, ge=0)
     qwen_unblur_upscale_alignment_max_side: int = Field(default=1024, ge=128)
     qwen_unblur_upscale_alignment_flow_strength: float = Field(default=1.0, ge=0.0, le=1.0)
+    qwen_unblur_upscale_structure_lock_enabled: bool = True
+    qwen_unblur_upscale_structure_blur_radius: float = Field(default=8.0, gt=0.0)
+    qwen_unblur_upscale_detail_strength: float = Field(default=0.65, ge=0.0, le=1.5)
     pixel_sharpen_enabled: bool = True
     pixel_sharpen_radius: float = Field(default=1.4, ge=0.0)
     pixel_sharpen_percent: int = Field(default=140, ge=0)

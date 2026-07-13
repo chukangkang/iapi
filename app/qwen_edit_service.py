@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageFilter, ImageOps
 
 from app.config import Settings
 from app.pipeline_utils import apply_pipeline_cpu_offload, apply_pipeline_memory_settings, get_pipeline_device_map_kwargs, get_remaining_cuda_max_memory, uses_pipeline_device_map
@@ -246,6 +246,26 @@ class QwenImageEditService:
         except Exception as exc:
             logger.warning("Qwen unblur output alignment failed; using unaligned image: %s", exc)
             return image
+
+    def transfer_details_to_reference(self, image: Image.Image, reference: Image.Image) -> Image.Image:
+        if not self.settings.qwen_unblur_upscale_structure_lock_enabled:
+            return image
+        enhanced = image.convert("RGB")
+        target = self._prepare_image(reference, enhanced.width, enhanced.height)
+        radius = self.settings.qwen_unblur_upscale_structure_blur_radius
+        strength = self.settings.qwen_unblur_upscale_detail_strength
+        generated_low = enhanced.filter(ImageFilter.GaussianBlur(radius=radius))
+        detail_layer = ImageChops.subtract(enhanced, generated_low, scale=1.0, offset=128)
+        if strength != 1.0:
+            neutral = Image.new("RGB", enhanced.size, (128, 128, 128))
+            detail_layer = Image.blend(neutral, detail_layer, strength)
+        restored = ImageChops.add(target, detail_layer, scale=1.0, offset=-128)
+        logger.info(
+            "Locked Qwen unblur structure to source: blur_radius=%.2f detail_strength=%.2f",
+            radius,
+            strength,
+        )
+        return restored.convert("RGB")
 
     def _align_dense_flow(self, enhanced: Image.Image, target: Image.Image) -> Optional[Image.Image]:
         try:
