@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 import uuid
 import re
@@ -17,6 +18,9 @@ from app.config import Settings, get_settings
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
+
+
+logger = logging.getLogger(__name__)
 
 
 SIZE_PRESETS = {
@@ -550,6 +554,11 @@ async def _run_image_request(
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
     face_enhance = _resolve_face_enhance(payload, app_settings)
     prompt = (payload.prompt or "").strip()
+    logger.info(
+        "Final image prompt used by worker: enhanced=%s prompt=%s",
+        payload.original_prompt is not None,
+        prompt,
+    )
     negative_prompt = _resolve_negative_prompt(app_settings)
     metadata = {
         "enhance_mode": enhance_mode,
@@ -954,6 +963,9 @@ async def _enhance_image_prompt(payload: ImageGenerationRequest, app_settings: S
     if expanded_prompt != original_prompt:
         payload.original_prompt = original_prompt
         payload.prompt = expanded_prompt
+        logger.info("Final image prompt after enhancement: %s", expanded_prompt)
+    else:
+        logger.info("Final image prompt unchanged: %s", original_prompt)
 
 
 def _apply_prompt_params(payload: ImageGenerationRequest) -> None:

@@ -21,7 +21,7 @@ class FakeHttpResponse:
         return self._body
 
 
-def test_chat_interface_builds_request_and_extracts_expanded_prompt(monkeypatch):
+def test_chat_interface_builds_request_and_extracts_expanded_prompt(monkeypatch, caplog):
     captured = {}
 
     def fake_urlopen(request, timeout):
@@ -42,13 +42,16 @@ def test_chat_interface_builds_request_and_extracts_expanded_prompt(monkeypatch)
         prompt_enhancer_api_type="chat",
     )
 
-    result = PromptEnhancer(settings)._enhance_sync("女孩在海边", aspect_ratio="16:9")
+    with caplog.at_level("INFO"):
+        result = PromptEnhancer(settings)._enhance_sync("女孩在海边", aspect_ratio="16:9")
 
     assert result == "电影感海边日落场景"
     assert captured["url"] == "http://text.example/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer secret"
     assert captured["payload"]["model"] == "qwen3.6-27b"
     assert captured["payload"]["messages"][-1]["content"] == "用户提示词：女孩在海边\n画面比例：16:9"
+    assert "Calling prompt enhancer: api_type=chat model=qwen3.6-27b" in caplog.text
+    assert "Prompt enhancer completed: model=qwen3.6-27b" in caplog.text
 
 
 def test_responses_interface_extracts_nested_output_text(monkeypatch):
@@ -105,7 +108,7 @@ def test_enhancer_rejects_missing_required_configuration():
 
 
 @pytest.mark.asyncio
-async def test_image_prompt_is_expanded_before_queue_submission(monkeypatch):
+async def test_image_prompt_is_expanded_before_queue_submission(monkeypatch, caplog):
     class FakeEnhancer:
         async def enhance(self, prompt, *, aspect_ratio=None):
             assert prompt == "女孩在海边"
@@ -116,10 +119,12 @@ async def test_image_prompt_is_expanded_before_queue_submission(monkeypatch):
     payload = ImageGenerationRequest(prompt="女孩在海边", aspect_ratio="16:9")
     settings = Settings(_env_file=None, prompt_enhancer_enabled=True)
 
-    await _enhance_image_prompt(payload, settings)
+    with caplog.at_level("INFO"):
+        await _enhance_image_prompt(payload, settings)
 
     assert payload.original_prompt == "女孩在海边"
     assert payload.prompt == "傍晚海边，女孩站在潮湿沙滩上，柔和逆光，横向电影构图。"
+    assert "Final image prompt after enhancement: 傍晚海边，女孩站在潮湿沙滩上，柔和逆光，横向电影构图。" in caplog.text
 
 
 @pytest.mark.asyncio

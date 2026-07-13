@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Optional
 from urllib.request import Request, urlopen
 
@@ -47,18 +48,32 @@ class PromptEnhancer:
         api_type = self.settings.prompt_enhancer_api_type
         payload = self._build_chat_payload(user_input) if api_type == "chat" else self._build_responses_payload(user_input)
         endpoint = "chat/completions" if api_type == "chat" else "responses"
+        url = f"{self.settings.prompt_enhancer_base_url.rstrip('/')}/{endpoint}"
+        logger.info(
+            "Calling prompt enhancer: api_type=%s model=%s endpoint=%s",
+            api_type,
+            self.settings.prompt_enhancer_model,
+            url,
+        )
         request = Request(
-            f"{self.settings.prompt_enhancer_base_url.rstrip('/')}/{endpoint}",
+            url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers=self._headers(),
             method="POST",
         )
+        started = time.monotonic()
         with urlopen(request, timeout=self.settings.prompt_enhancer_timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
         content = self._extract_chat_text(body) if api_type == "chat" else self._extract_responses_text(body)
         expanded_prompt = self._parse_expanded_prompt(content)
         if not expanded_prompt:
             raise ValueError("Prompt enhancer returned an empty expanded_prompt")
+        logger.info(
+            "Prompt enhancer completed: model=%s elapsed_ms=%s prompt_chars=%s",
+            self.settings.prompt_enhancer_model,
+            round((time.monotonic() - started) * 1000),
+            len(expanded_prompt),
+        )
         return expanded_prompt
 
     def _validate_request_configuration(self) -> None:
