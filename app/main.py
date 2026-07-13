@@ -779,6 +779,15 @@ def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings,
     if payload.endpoint == "edits":
         return _resolve_edit_dimensions(payload, app_settings, reference_image)
 
+    if (
+        reference_image is not None
+        and payload.resolution
+        and payload.enhance_mode
+        in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
+        and not payload.aspect_ratio
+    ):
+        return _edit_dimensions_from_reference_resolution(reference_image, payload.resolution.lower())
+
     if reference_image is not None and not payload.aspect_ratio:
         return SIZE_PRESETS[_closest_preset_aspect_ratio(reference_image, SIZE_PRESETS.keys())]
 

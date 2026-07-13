@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 
 from app.config import Settings
 
@@ -200,6 +200,13 @@ class ImageUpscaleService:
     def _fit_to_target(self, image: Image.Image, *, width: int, height: int, fit_mode: str) -> Image.Image:
         if fit_mode == "stretch":
             return image.resize((width, height), Image.Resampling.LANCZOS)
+        if fit_mode == "cover":
+            return ImageOps.fit(
+                image,
+                (width, height),
+                method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
 
         source_ratio = image.width / image.height
         target_ratio = width / height

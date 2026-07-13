@@ -99,7 +99,7 @@ def test_qwen_edit_scale_to_length_rejects_negative_values():
         Settings(_env_file=None, qwen_edit_scale_to_length=-1)
 
 
-def test_qwen_edit_cover_fit_preserves_full_image_content():
+def test_qwen_edit_cover_fit_fills_target_without_black_bars():
     settings = Settings(_env_file=None, qwen_edit_input_fit_mode="cover")
     service = QwenImageEditService(settings)
     image = Image.new("RGB", (200, 100), "red")
@@ -107,10 +107,11 @@ def test_qwen_edit_cover_fit_preserves_full_image_content():
     prepared = service._prepare_image(image, 100, 100)
 
     assert prepared.size == (100, 100)
-    assert prepared.getbbox() == (0, 25, 100, 75)
+    assert prepared.getbbox() == (0, 0, 100, 100)
+    assert prepared.getpixel((50, 0)) == (255, 0, 0)
 
 
-def test_upscale_cover_fit_preserves_full_image_content():
+def test_upscale_cover_fit_fills_target_without_black_bars():
     settings = Settings(_env_file=None, upscale_fit_mode="cover", upscale_fill_color="black")
     service = ImageUpscaleService(settings)
     image = Image.new("RGB", (200, 100), "red")
@@ -118,6 +119,17 @@ def test_upscale_cover_fit_preserves_full_image_content():
     fitted = service._fit_to_target(image, width=100, height=100, fit_mode="cover")
 
     assert fitted.size == (100, 100)
+    assert fitted.getbbox() == (0, 0, 100, 100)
+    assert fitted.getpixel((50, 0)) == (255, 0, 0)
+
+
+def test_upscale_contain_preserves_full_image_with_letterbox():
+    settings = Settings(_env_file=None, upscale_fill_color="black")
+    service = ImageUpscaleService(settings)
+    image = Image.new("RGB", (200, 100), "red")
+
+    fitted = service._fit_to_target(image, width=100, height=100, fit_mode="contain")
+
     assert fitted.getbbox() == (0, 25, 100, 75)
 
 
@@ -186,6 +198,22 @@ def test_edit_4k_resolution_preserves_reference_aspect_ratio_when_missing():
 
     assert (width, height) == (2736, 4096)
     assert abs((width / height) - (1000 / 1500)) < 0.002
+
+
+def test_unblur_upscale_4k_generation_preserves_reference_aspect_ratio():
+    payload = ImageGenerationRequest(
+        endpoint="generations",
+        prompt="unblur and upscale",
+        image=_sample_base64_png(),
+        enhance_mode="qwen_unblur_upscale_realesrgan",
+        resolution="4k",
+    )
+    reference_image = Image.new("RGB", (1920, 1200), "red")
+
+    width, height = _resolve_dimensions(payload, Settings(), reference_image)
+
+    assert (width, height) == (4096, 2560)
+    assert width / height == reference_image.width / reference_image.height
 
 
 def test_explicit_edit_dimensions_override_reference_aspect_ratio():
