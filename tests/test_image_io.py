@@ -89,11 +89,12 @@ def test_qwen_unblur_defaults_match_low_distortion_lightning_workflow():
     assert settings.qwen_edit_guidance_scale == 1.0
     assert settings.qwen_edit_true_cfg_scale == 1.0
     assert settings.qwen_edit_scale_to_length == 2048
-    assert settings.qwen_edit_input_fit_mode == "contain"
+    assert settings.qwen_edit_input_fit_mode == "cover"
     assert settings.qwen_edit_lightning_lora_enabled is True
     assert settings.qwen_edit_lightning_lora_scale == 1.0
     assert settings.qwen_edit_scheduler_base_shift == pytest.approx(1.0986122886681098)
-    assert settings.qwen_unblur_upscale_alignment_mode == "translation"
+    assert settings.qwen_unblur_upscale_alignment_enabled is False
+    assert settings.upscale_fit_mode == "cover"
 
 
 def test_qwen_edit_applies_lightning_lora_and_scheduler():

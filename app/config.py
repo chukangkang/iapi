@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
     qwen_edit_scale_to_length: int = Field(default=2048, ge=0)
     qwen_edit_round_to_multiple: int = Field(default=16, ge=1)
-    qwen_edit_input_fit_mode: Literal["contain", "cover"] = "contain"
+    qwen_edit_input_fit_mode: Literal["contain", "cover"] = "cover"
     qwen_edit_background_color: str = "#000000"
     qwen_edit_quantization: Literal["none", "8bit", "4bit"] = "none"
     qwen_edit_device_map: Literal["none", "balanced", "cuda", "cpu"] = "none"
@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     qwen_unblur_upscale_lora_enabled: bool = False
     qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
-    qwen_unblur_upscale_alignment_enabled: bool = True
+    qwen_unblur_upscale_alignment_enabled: bool = False
     qwen_unblur_upscale_alignment_mode: Literal["translation", "dense"] = "translation"
     qwen_unblur_upscale_alignment_max_shift: int = Field(default=64, ge=0)
     qwen_unblur_upscale_alignment_max_side: int = Field(default=1024, ge=128)
