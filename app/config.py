@@ -82,9 +82,11 @@ class Settings(BaseSettings):
     qwen_unblur_upscale_lora_enabled: bool = False
     qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
-    qwen_unblur_upscale_alignment_enabled: bool = False
-    qwen_unblur_upscale_alignment_mode: Literal["translation", "dense"] = "translation"
+    qwen_unblur_upscale_alignment_enabled: bool = True
+    qwen_unblur_upscale_alignment_mode: Literal["translation", "similarity", "dense"] = "similarity"
     qwen_unblur_upscale_alignment_max_shift: int = Field(default=64, ge=0)
+    qwen_unblur_upscale_alignment_max_scale_delta: float = Field(default=0.05, ge=0.0, le=0.25)
+    qwen_unblur_upscale_alignment_max_rotation_degrees: float = Field(default=2.0, ge=0.0, le=15.0)
     qwen_unblur_upscale_alignment_max_side: int = Field(default=1024, ge=128)
     qwen_unblur_upscale_alignment_flow_strength: float = Field(default=1.0, ge=0.0, le=1.0)
     pixel_sharpen_enabled: bool = True

@@ -93,7 +93,8 @@ def test_qwen_unblur_defaults_match_low_distortion_lightning_workflow():
     assert settings.qwen_edit_lightning_lora_enabled is True
     assert settings.qwen_edit_lightning_lora_scale == 1.0
     assert settings.qwen_edit_scheduler_base_shift == pytest.approx(1.0986122886681098)
-    assert settings.qwen_unblur_upscale_alignment_enabled is False
+    assert settings.qwen_unblur_upscale_alignment_enabled is True
+    assert settings.qwen_unblur_upscale_alignment_mode == "similarity"
     assert settings.upscale_fit_mode == "cover"
 
 
@@ -182,9 +183,23 @@ def test_qwen_edit_alignment_corrects_enhanced_image_translation():
 def test_qwen_unblur_alignment_defaults_to_translation_without_local_warp():
     settings = Settings(_env_file=None)
 
-    assert settings.qwen_unblur_upscale_alignment_mode == "translation"
+    assert settings.qwen_unblur_upscale_alignment_mode == "similarity"
     assert settings.qwen_unblur_upscale_alignment_max_side == 1024
     assert settings.qwen_unblur_upscale_alignment_flow_strength == 1.0
+
+
+def test_qwen_unblur_similarity_transform_rejects_excessive_scale_or_rotation():
+    settings = Settings(
+        _env_file=None,
+        qwen_unblur_upscale_alignment_max_shift=32,
+        qwen_unblur_upscale_alignment_max_scale_delta=0.05,
+        qwen_unblur_upscale_alignment_max_rotation_degrees=2.0,
+    )
+    service = QwenImageEditService(settings)
+
+    assert service._similarity_transform_is_safe(scale=1.03, rotation_degrees=1.5, shift_x=8, shift_y=-6)
+    assert not service._similarity_transform_is_safe(scale=1.08, rotation_degrees=1.5, shift_x=8, shift_y=-6)
+    assert not service._similarity_transform_is_safe(scale=1.03, rotation_degrees=3.0, shift_x=8, shift_y=-6)
 
 
 def test_upscale_cover_fit_fills_target_without_black_bars():

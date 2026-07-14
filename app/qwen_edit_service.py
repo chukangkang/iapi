@@ -213,6 +213,10 @@ class QwenImageEditService:
                 densely_aligned = self._align_dense_flow(enhanced, target)
                 if densely_aligned is not None:
                     return densely_aligned
+            if self.settings.qwen_unblur_upscale_alignment_mode == "similarity":
+                similarity_aligned = self._align_similarity(enhanced, target)
+                if similarity_aligned is not None:
+                    return similarity_aligned
             max_shift = self.settings.qwen_unblur_upscale_alignment_max_shift
             shift_x, shift_y, alignment_error = self._estimate_translation(target, enhanced, max_shift)
             if abs(shift_x) > max_shift or abs(shift_y) > max_shift:
@@ -246,6 +250,92 @@ class QwenImageEditService:
         except Exception as exc:
             logger.warning("Qwen unblur output alignment failed; using unaligned image: %s", exc)
             return image
+
+    def _align_similarity(self, enhanced: Image.Image, target: Image.Image) -> Optional[Image.Image]:
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            logger.warning("Similarity alignment requires opencv-python and numpy; falling back to translation")
+            return None
+
+        max_side = self.settings.qwen_unblur_upscale_alignment_max_side
+        sample_scale = min(1.0, max_side / max(enhanced.width, enhanced.height))
+        sample_size = (max(64, round(enhanced.width * sample_scale)), max(64, round(enhanced.height * sample_scale)))
+        enhanced_gray = np.asarray(enhanced.resize(sample_size, Image.Resampling.BILINEAR).convert("L"))
+        target_gray = np.asarray(target.resize(sample_size, Image.Resampling.BILINEAR).convert("L"))
+        detector = cv2.ORB_create(nfeatures=3000, fastThreshold=10)
+        enhanced_points, enhanced_descriptors = detector.detectAndCompute(enhanced_gray, None)
+        target_points, target_descriptors = detector.detectAndCompute(target_gray, None)
+        if enhanced_descriptors is None or target_descriptors is None:
+            logger.warning("Similarity alignment found insufficient image features; falling back to translation")
+            return None
+        matches = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(enhanced_descriptors, target_descriptors, k=2)
+        good_matches = [first for first, second in matches if first.distance < 0.75 * second.distance]
+        if len(good_matches) < 8:
+            logger.warning("Similarity alignment found only %s reliable matches; falling back to translation", len(good_matches))
+            return None
+        source_points = np.float32([enhanced_points[match.queryIdx].pt for match in good_matches])
+        target_points_array = np.float32([target_points[match.trainIdx].pt for match in good_matches])
+        matrix, inliers = cv2.estimateAffinePartial2D(
+            source_points,
+            target_points_array,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=2.0,
+            maxIters=3000,
+            confidence=0.99,
+            refineIters=20,
+        )
+        if matrix is None or inliers is None or int(inliers.sum()) < 6:
+            logger.warning("Similarity alignment could not estimate a reliable transform; falling back to translation")
+            return None
+        scale = float((matrix[0, 0] ** 2 + matrix[0, 1] ** 2) ** 0.5)
+        rotation_degrees = float(math.degrees(math.atan2(matrix[1, 0], matrix[0, 0])))
+        shift_x = float(matrix[0, 2] / sample_scale)
+        shift_y = float(matrix[1, 2] / sample_scale)
+        if not self._similarity_transform_is_safe(scale, rotation_degrees, shift_x, shift_y):
+            logger.warning(
+                "Rejected unsafe Qwen similarity alignment: scale=%.4f rotation=%.2f shift=(%.2f, %.2f)",
+                scale,
+                rotation_degrees,
+                shift_x,
+                shift_y,
+            )
+            return None
+        full_matrix = matrix.copy()
+        full_matrix[0, 2] /= sample_scale
+        full_matrix[1, 2] /= sample_scale
+        aligned = cv2.warpAffine(
+            np.asarray(enhanced),
+            full_matrix,
+            (enhanced.width, enhanced.height),
+            flags=cv2.INTER_LANCZOS4,
+            borderMode=cv2.BORDER_REFLECT_101,
+        )
+        logger.info(
+            "Similarity-aligned Qwen unblur output: scale=%.4f rotation=%.2f shift=(%.2f, %.2f) inliers=%s/%s",
+            scale,
+            rotation_degrees,
+            shift_x,
+            shift_y,
+            int(inliers.sum()),
+            len(good_matches),
+        )
+        return Image.fromarray(aligned).convert("RGB")
+
+    def _similarity_transform_is_safe(
+        self,
+        scale: float,
+        rotation_degrees: float,
+        shift_x: float,
+        shift_y: float,
+    ) -> bool:
+        return (
+            abs(scale - 1.0) <= self.settings.qwen_unblur_upscale_alignment_max_scale_delta
+            and abs(rotation_degrees) <= self.settings.qwen_unblur_upscale_alignment_max_rotation_degrees
+            and abs(shift_x) <= self.settings.qwen_unblur_upscale_alignment_max_shift
+            and abs(shift_y) <= self.settings.qwen_unblur_upscale_alignment_max_shift
+        )
 
     def _align_dense_flow(self, enhanced: Image.Image, target: Image.Image) -> Optional[Image.Image]:
         try:
