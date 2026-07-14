@@ -4,7 +4,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image
-from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_negative_prompt, _resolve_qwen_edit_dimensions, _validate_image_payload
+from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_negative_prompt, _resolve_qwen_edit_dimensions, _resolve_qwen_unblur_lora, _validate_image_payload
 from app.config import Settings
 from app.qwen_edit_service import QwenImageEditService
 from app.upscale_service import ImageUpscaleService
@@ -132,6 +132,40 @@ def test_qwen_edit_applies_lightning_lora_and_scheduler():
     assert pipe.loaded[0][0] == settings.qwen_edit_lightning_lora_path
     assert pipe.loaded[0][1]["weight_name"] == settings.qwen_edit_lightning_lora_weight_name
     assert pipe.adapters == (["qwen_edit_lightning"], [1.0])
+
+
+def test_qwen_edit_does_not_replace_scheduler_when_lightning_is_disabled():
+    class FakeScheduler:
+        config = {"existing": True}
+
+        @classmethod
+        def from_config(cls, config, **kwargs):
+            raise AssertionError("The scheduler must remain unchanged without Lightning")
+
+    class FakePipeline:
+        def __init__(self):
+            self.scheduler = FakeScheduler()
+
+    settings = Settings(_env_file=None, qwen_edit_lightning_lora_enabled=False)
+    service = QwenImageEditService(settings)
+    pipe = FakePipeline()
+    original_scheduler = pipe.scheduler
+
+    service._configure_edit_pipeline(pipe)
+
+    assert pipe.scheduler is original_scheduler
+
+
+def test_qwen_unblur_lora_settings_respect_enabled_switch():
+    disabled = Settings(_env_file=None, qwen_unblur_upscale_lora_enabled=False)
+    enabled = Settings(_env_file=None, qwen_unblur_upscale_lora_enabled=True)
+
+    assert _resolve_qwen_unblur_lora(True, disabled) == (None, None)
+    assert _resolve_qwen_unblur_lora(False, enabled) == (None, None)
+    assert _resolve_qwen_unblur_lora(True, enabled) == (
+        enabled.qwen_unblur_upscale_lora_path,
+        enabled.qwen_unblur_upscale_lora_weight_name,
+    )
 
 
 def test_qwen_image_uses_fixed_negative_prompt_from_settings():

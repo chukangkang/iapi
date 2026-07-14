@@ -602,6 +602,7 @@ async def _run_image_request(
             metadata["qwen_unblur_upscale_lora_path"] = app_settings.qwen_unblur_upscale_lora_path
             metadata["qwen_unblur_upscale_lora_weight_name"] = app_settings.qwen_unblur_upscale_lora_weight_name
             metadata["qwen_unblur_upscale_lora_scale"] = app_settings.qwen_unblur_upscale_lora_scale
+        unblur_lora_path, unblur_lora_weight_name = _resolve_qwen_unblur_lora(is_unblur_upscale, app_settings)
         image = await _get_qwen_edit_service().edit(
             prompt=qwen_prompt,
             negative_prompt=negative_prompt,
@@ -612,8 +613,8 @@ async def _run_image_request(
             seed=payload.seed,
             guidance_scale=app_settings.qwen_edit_guidance_scale,
             strength=qwen_strength,
-            lora_path=app_settings.qwen_unblur_upscale_lora_path if is_unblur_upscale and app_settings.qwen_unblur_upscale_lora_enabled else None,
-            lora_weight_name=app_settings.qwen_unblur_upscale_lora_weight_name if is_unblur_upscale and app_settings.qwen_unblur_upscale_lora_enabled else None,
+            lora_path=unblur_lora_path,
+            lora_weight_name=unblur_lora_weight_name,
             lora_scale=app_settings.qwen_unblur_upscale_lora_scale,
         )
         if is_unblur_upscale and primary_reference_image is not None:
@@ -688,9 +689,10 @@ async def _prepare_image_request(
         if reference_image_count > 1 and enhance_mode != "qwen_edit":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple input images are only supported for qwen_edit mode.")
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
+        unblur_lora_path, unblur_lora_weight_name = _resolve_qwen_unblur_lora(is_unblur_upscale, app_settings)
         await _get_qwen_edit_service().prepare(
-            lora_path=app_settings.qwen_unblur_upscale_lora_path if is_unblur_upscale else None,
-            lora_weight_name=app_settings.qwen_unblur_upscale_lora_weight_name if is_unblur_upscale else None,
+            lora_path=unblur_lora_path,
+            lora_weight_name=unblur_lora_weight_name,
         )
         if enhance_mode in {"qwen_edit_realesrgan", "qwen_unblur_upscale_realesrgan"}:
             await _get_upscale_service().prepare(method="realesrgan")
@@ -925,6 +927,12 @@ def _resolve_qwen_edit_dimensions(output_width: int, output_height: int, app_set
     width = max(64, _round_to_multiple(output_width * scale, app_settings.qwen_edit_round_to_multiple))
     height = max(64, _round_to_multiple(output_height * scale, app_settings.qwen_edit_round_to_multiple))
     return width, height
+
+
+def _resolve_qwen_unblur_lora(is_unblur_upscale: bool, app_settings: Settings) -> tuple[Optional[str], Optional[str]]:
+    if not is_unblur_upscale or not app_settings.qwen_unblur_upscale_lora_enabled:
+        return None, None
+    return app_settings.qwen_unblur_upscale_lora_path, app_settings.qwen_unblur_upscale_lora_weight_name
 
 
 def _round_to_multiple(value: float, multiple: int) -> int:

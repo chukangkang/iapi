@@ -186,6 +186,11 @@ class QwenImageEditService:
         pipe.scheduler = scheduler.__class__.from_config(scheduler.config, **scheduler_kwargs)
         logger.info("Applied Qwen Edit Lightning scheduler: base_shift=%.4f", base_shift)
 
+    def _configure_edit_pipeline(self, pipe) -> None:
+        if self.settings.qwen_edit_lightning_lora_enabled:
+            self._apply_edit_scheduler(pipe)
+        self._apply_edit_lora(pipe)
+
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
         image = image.convert("RGB")
         if self.settings.qwen_edit_input_fit_mode == "cover":
@@ -475,8 +480,7 @@ class QwenImageEditService:
         apply_pipeline_memory_settings(pipe, self.settings)
         # LoRA 必须在 _move_unsharded_components_to_device 之前，
         # 因为 load_lora_weights 可能重新分配设备。之后再把 CPU 组件移 GPU。
-        self._apply_edit_scheduler(pipe)
-        self._apply_edit_lora(pipe)
+        self._configure_edit_pipeline(pipe)
         if device_map_enabled:
             self._move_unsharded_components_to_device(pipe, torch)
         if hasattr(pipe, "set_progress_bar_config"):
