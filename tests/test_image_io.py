@@ -246,6 +246,21 @@ def test_generation_dimensions_use_reference_aspect_ratio_when_missing():
     assert _resolve_dimensions(payload, Settings(), reference_image) == (1664, 928)
 
 
+def test_unblur_upscale_without_resolution_preserves_exact_reference_aspect_ratio():
+    payload = ImageGenerationRequest(
+        prompt="unblur and upscale",
+        image=_sample_base64_png(),
+        enhance_mode="qwen_unblur_upscale_realesrgan",
+    )
+    reference_image = Image.new("RGB", (1920, 1200), "red")
+
+    width, height = _resolve_dimensions(payload, Settings(), reference_image)
+
+    assert width % 16 == 0
+    assert height % 16 == 0
+    assert abs((width / height) - (1920 / 1200)) < 0.002
+
+
 def test_edit_dimensions_use_reference_aspect_ratio_when_missing():
     payload = ImageGenerationRequest(endpoint="edits", prompt="test", image=_sample_base64_png())
     reference_image = Image.new("RGB", (900, 1600), "red")

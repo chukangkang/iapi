@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 import uuid
 import re
@@ -792,6 +793,17 @@ def _resolve_dimensions(payload: ImageGenerationRequest, app_settings: Settings,
     ):
         return _edit_dimensions_from_reference_resolution(reference_image, payload.resolution.lower())
 
+    if (
+        reference_image is not None
+        and payload.enhance_mode
+        in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
+        and not payload.aspect_ratio
+    ):
+        return _dimensions_from_reference_aspect_ratio(
+            reference_image,
+            (app_settings.default_width, app_settings.default_height),
+        )
+
     if reference_image is not None and not payload.aspect_ratio:
         return SIZE_PRESETS[_closest_preset_aspect_ratio(reference_image, SIZE_PRESETS.keys())]
 
@@ -861,9 +873,21 @@ def _dimensions_from_reference_aspect_ratio(reference_image, base_size: tuple[in
     if reference_image.width <= 0 or reference_image.height <= 0:
         return base_width, base_height
     target_pixels = base_width * base_height
-    aspect_ratio = reference_image.width / reference_image.height
-    width = _multiple_of_16((target_pixels * aspect_ratio) ** 0.5)
-    height = _multiple_of_16(width / aspect_ratio)
+    divisor = math.gcd(reference_image.width, reference_image.height)
+    ratio_width = reference_image.width // divisor
+    ratio_height = reference_image.height // divisor
+    multiplier_quantum = math.lcm(
+        16 // math.gcd(ratio_width, 16),
+        16 // math.gcd(ratio_height, 16),
+    )
+    ideal_multiplier = (target_pixels / (ratio_width * ratio_height)) ** 0.5
+    multiplier = max(multiplier_quantum, round(ideal_multiplier / multiplier_quantum) * multiplier_quantum)
+    width = ratio_width * multiplier
+    height = ratio_height * multiplier
+    if width > base_width * 4 or height > base_height * 4:
+        aspect_ratio = reference_image.width / reference_image.height
+        width = _multiple_of_16((target_pixels * aspect_ratio) ** 0.5)
+        height = _multiple_of_16(width / aspect_ratio)
     return width, height
 
 
