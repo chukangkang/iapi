@@ -93,6 +93,12 @@ def test_qwen_unblur_defaults_match_low_distortion_lightning_workflow():
     assert settings.qwen_edit_lightning_lora_enabled is True
     assert settings.qwen_edit_lightning_lora_scale == 1.0
     assert settings.qwen_edit_scheduler_base_shift == pytest.approx(1.0986122886681098)
+    assert settings.qwen_unblur_upscale_trigger_prompt == (
+        "Unblur and upscale this image. Restore only missing high-frequency details and improve clarity. "
+        "Strictly preserve the original identity, facial geometry, facial features, expression, skin tone, "
+        "hairstyle, pose, body proportions, clothing, composition, camera angle, lighting, colors, background, "
+        "text, and object positions. Do not add, remove, move, reshape, or redesign any subject or object."
+    )
     assert settings.qwen_unblur_upscale_alignment_enabled is True
     assert settings.qwen_unblur_upscale_alignment_mode == "similarity"
     assert settings.upscale_fit_mode == "cover"

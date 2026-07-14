@@ -80,7 +80,12 @@ class Settings(BaseSettings):
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
     qwen_unblur_upscale_lora_enabled: bool = False
-    qwen_unblur_upscale_trigger_prompt: str = "unblur and upscale"
+    qwen_unblur_upscale_trigger_prompt: str = (
+        "Unblur and upscale this image. Restore only missing high-frequency details and improve clarity. "
+        "Strictly preserve the original identity, facial geometry, facial features, expression, skin tone, "
+        "hairstyle, pose, body proportions, clothing, composition, camera angle, lighting, colors, background, "
+        "text, and object positions. Do not add, remove, move, reshape, or redesign any subject or object."
+    )
     qwen_unblur_upscale_lora_scale: float = Field(default=1.0, ge=0.0)
     qwen_unblur_upscale_alignment_enabled: bool = True
     qwen_unblur_upscale_alignment_mode: Literal["translation", "similarity", "dense"] = "similarity"
