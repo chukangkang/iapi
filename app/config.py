@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     qwen_image_turbo_scheduler_use_dynamic_shifting: bool = True
     qwen_image_turbo_scheduler_shift_terminal: float = 0.7155
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
+    qwen_edit_backend: Literal["diffusers", "comfyui"] = "diffusers"
     qwen_edit_pipeline_class: str = "DiffusionPipeline"
     qwen_edit_steps: int = Field(default=4, ge=1)
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
@@ -77,6 +78,17 @@ class Settings(BaseSettings):
     qwen_edit_lightning_lora_weight_name: str = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
     qwen_edit_lightning_lora_scale: float = Field(default=1.0, ge=0.0)
     qwen_edit_scheduler_base_shift: float = Field(default=math.log(3), gt=0.0)
+    comfyui_path: Path = Path("ComfyUI")
+    comfyui_models_path: Path = Path("ComfyUI/models")
+    comfyui_qwen_edit_unet_name: str = "qwen_image_edit_2511_fp8mixed.safetensors"
+    comfyui_qwen_edit_unet_weight_dtype: Literal["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"] = "fp8_e4m3fn"
+    comfyui_qwen_edit_clip_name: str = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    comfyui_qwen_edit_clip_device: Literal["default", "cpu"] = "default"
+    comfyui_qwen_edit_vae_name: str = "qwen_image_vae.safetensors"
+    comfyui_qwen_edit_lora_name: str = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
+    comfyui_qwen_edit_model_shift: float = Field(default=3.1, ge=0.0)
+    comfyui_qwen_edit_sampler_name: str = "euler"
+    comfyui_qwen_edit_scheduler: str = "simple"
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
     qwen_unblur_upscale_lora_enabled: bool = False

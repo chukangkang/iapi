@@ -30,6 +30,7 @@ class QwenImageEditService:
         self._lora_weight_name: Optional[str] = None
         self._lora_scale: float = 1.0
         self._pipe_lock = threading.Lock()
+        self._comfyui_backend = None
 
 
     async def edit(
@@ -73,6 +74,13 @@ class QwenImageEditService:
         )
 
     def _prepare_sync(self, *, lora_path: Optional[str], lora_weight_name: Optional[str], lora_scale: float) -> None:
+        if self.settings.qwen_edit_backend == "comfyui":
+            self._get_comfyui_backend().prepare(
+                lora_path=lora_path,
+                lora_weight_name=lora_weight_name,
+                lora_scale=lora_scale,
+            )
+            return
         self._lora_path = lora_path
         self._lora_weight_name = lora_weight_name
         self._lora_scale = lora_scale
@@ -94,6 +102,22 @@ class QwenImageEditService:
         lora_weight_name: Optional[str],
         lora_scale: float,
     ) -> Image.Image:
+        if self.settings.qwen_edit_backend == "comfyui":
+            return self._get_comfyui_backend().edit(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                image=image,
+                width=width,
+                height=height,
+                num_inference_steps=num_inference_steps,
+                seed=seed,
+                guidance_scale=guidance_scale,
+                strength=strength,
+                lora_path=lora_path,
+                lora_weight_name=lora_weight_name,
+                lora_scale=lora_scale,
+            )
+
         import torch
 
         self._lora_path = lora_path
@@ -615,4 +639,14 @@ class QwenImageEditService:
 
     def unload(self) -> None:
         """主动释放当前服务持有的 pipeline。"""
+        if self._comfyui_backend is not None:
+            self._comfyui_backend.unload()
+            self._comfyui_backend = None
         self._unload_pipeline()
+
+    def _get_comfyui_backend(self):
+        if self._comfyui_backend is None:
+            from app.comfyui_edit_backend import ComfyUIEditBackend
+
+            self._comfyui_backend = ComfyUIEditBackend(self.settings)
+        return self._comfyui_backend
