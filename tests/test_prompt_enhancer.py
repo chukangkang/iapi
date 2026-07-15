@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app.config import Settings
-from app.main import ImageGenerationRequest, _enhance_image_prompt
+from app.main import ImageGenerationRequest, _enhance_image_prompt, _resolve_qwen_edit_prompt
 from app.prompt_enhancer import PromptEnhancer
 
 
@@ -237,3 +237,36 @@ async def test_image_processing_modes_skip_prompt_enhancement(monkeypatch, enhan
 
     assert payload.original_prompt is None
     assert payload.prompt == "unblur and upscale"
+
+
+def test_worker_restores_original_prompt_for_queued_qwen_edit_task():
+    prompt = _resolve_qwen_edit_prompt(
+        prompt="扩写后的人像摄影描述",
+        original_prompt="使模糊的图片修复高清",
+        is_unblur_upscale=False,
+        trigger_prompt="Unblur and upscale",
+    )
+
+    assert prompt == "使模糊的图片修复高清"
+
+
+def test_original_prompt_wins_over_unblur_trigger_for_enhanced_legacy_task():
+    prompt = _resolve_qwen_edit_prompt(
+        prompt="扩写后的人像摄影描述",
+        original_prompt="使模糊的图片修复高清",
+        is_unblur_upscale=True,
+        trigger_prompt="Unblur and upscale",
+    )
+
+    assert prompt == "使模糊的图片修复高清"
+
+
+def test_unblur_trigger_is_used_when_request_was_not_enhanced():
+    prompt = _resolve_qwen_edit_prompt(
+        prompt="用户普通描述",
+        original_prompt=None,
+        is_unblur_upscale=True,
+        trigger_prompt="Unblur and upscale",
+    )
+
+    assert prompt == "Unblur and upscale"

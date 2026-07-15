@@ -555,11 +555,6 @@ async def _run_image_request(
     upscale_fit_mode = _resolve_upscale_fit_mode(payload, app_settings)
     face_enhance = _resolve_face_enhance(payload, app_settings)
     prompt = (payload.prompt or "").strip()
-    logger.info(
-        "Final image prompt used by worker: enhanced=%s prompt=%s",
-        payload.original_prompt is not None,
-        prompt,
-    )
     negative_prompt = _resolve_negative_prompt(app_settings)
     metadata = {
         "enhance_mode": enhance_mode,
@@ -589,7 +584,17 @@ async def _run_image_request(
         generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
         qwen_strength = payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength
         is_unblur_upscale = enhance_mode in {"qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}
-        qwen_prompt = app_settings.qwen_unblur_upscale_trigger_prompt.strip() if is_unblur_upscale and app_settings.qwen_unblur_upscale_trigger_prompt.strip() else prompt
+        qwen_prompt = _resolve_qwen_edit_prompt(
+            prompt=prompt,
+            original_prompt=payload.original_prompt,
+            is_unblur_upscale=is_unblur_upscale,
+            trigger_prompt=app_settings.qwen_unblur_upscale_trigger_prompt,
+        )
+        logger.info(
+            "Final Qwen Edit prompt used by worker: restored_original=%s prompt=%s",
+            payload.original_prompt is not None,
+            qwen_prompt,
+        )
         metadata["qwen_edit_model_path"] = app_settings.qwen_edit_model_path
         if not payload.enhance_mode and _is_qwen_image_model(payload.model, app_settings):
             metadata["qwen_image_i2i_fallback"] = "qwen_edit"
@@ -933,6 +938,22 @@ def _resolve_qwen_unblur_lora(is_unblur_upscale: bool, app_settings: Settings) -
     if not is_unblur_upscale or not app_settings.qwen_unblur_upscale_lora_enabled:
         return None, None
     return app_settings.qwen_unblur_upscale_lora_path, app_settings.qwen_unblur_upscale_lora_weight_name
+
+
+def _resolve_qwen_edit_prompt(
+    *,
+    prompt: str,
+    original_prompt: Optional[str],
+    is_unblur_upscale: bool,
+    trigger_prompt: str,
+) -> str:
+    original = (original_prompt or "").strip()
+    if original:
+        return original
+    trigger = trigger_prompt.strip()
+    if is_unblur_upscale and trigger:
+        return trigger
+    return prompt.strip()
 
 
 def _round_to_multiple(value: float, multiple: int) -> int:
