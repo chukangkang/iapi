@@ -213,6 +213,8 @@ async def test_request_can_disable_prompt_enhancement(monkeypatch):
     [
         "pixel",
         "realesrgan",
+        "qwen_edit",
+        "qwen_edit_realesrgan",
         "qwen_unblur_upscale",
         "qwen_unblur_upscale_realesrgan",
     ],

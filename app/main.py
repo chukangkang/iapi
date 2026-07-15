@@ -1003,6 +1003,8 @@ async def _enhance_image_prompt(payload: ImageGenerationRequest, app_settings: S
     if payload.enhance_mode in {
         "pixel",
         "realesrgan",
+        "qwen_edit",
+        "qwen_edit_realesrgan",
         "qwen_unblur_upscale",
         "qwen_unblur_upscale_realesrgan",
     }:

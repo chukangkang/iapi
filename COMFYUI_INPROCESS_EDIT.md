@@ -41,6 +41,8 @@ COMFYUI_QWEN_EDIT_DEFAULT_SEED=1
 
 截图工作流使用 `steps=4`、`cfg=1.0`、`denoise=1.0`、空负向文本和固定 `seed=1`。ComfyUI 后端使用独立的空负向配置，不再复用 API 中 Qwen Image 的通用负面提示词。
 
+`qwen_edit`、`qwen_edit_realesrgan` 以及两个 unblur 模式会跳过 API 的 Prompt Enhancer。即使全局 `PROMPT_ENHANCER_ENABLED=true` 或请求传入 `prompt_enhance=true`，Edit 指令也会保持原文，避免“修复高清”被扩写成人像重绘描述。
+
 启动日志应包含 Lightning LoRA，例如 `loras=['Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors']`。如果仍显示 `loras=[]`，说明 Worker 实际环境中的 `QWEN_EDIT_LIGHTNING_LORA_ENABLED` 为 false，或部署代码/配置未更新；此时不会与截图结果一致。
 
 对应文件应位于：
