@@ -1,7 +1,7 @@
 import pytest
 from PIL import Image
 
-from app.comfyui_edit_backend import ComfyUIEditBackend, _comfyui_import_error
+from app.comfyui_edit_backend import ComfyUIEditBackend, ComfyUIRuntime, _comfyui_import_error
 from app.config import Settings
 
 
@@ -36,6 +36,31 @@ class FakeTorch:
     @staticmethod
     def from_numpy(value):
         return FakeTensor(value)
+
+
+class FakeInferenceMode:
+    def __init__(self, torch):
+        self.torch = torch
+
+    def __enter__(self):
+        self.torch.inference_enabled = True
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.torch.inference_enabled = False
+
+
+class FakeInferenceTorch:
+    inference_enabled = False
+
+    @classmethod
+    def inference_mode(cls):
+        return FakeInferenceMode(cls)
+
+
+class DecodeRequiresInferenceMode:
+    def decode(self, vae, samples):
+        assert FakeInferenceTorch.inference_enabled is True
+        return ("decoded",)
 
 
 class NodeOutput:
@@ -210,5 +235,14 @@ def test_missing_transitive_dependency_has_install_command():
     assert "trampoline" in message
     assert "pip install" in message
     assert "requirements-worker.txt" in message
+
+
+def test_runtime_decodes_vae_inside_inference_mode():
+    runtime = object.__new__(ComfyUIRuntime)
+    runtime.torch = FakeInferenceTorch
+    runtime._decode_node = DecodeRequiresInferenceMode()
+
+    assert runtime.decode("vae", {"samples": "latent"}) == ("decoded",)
+    assert FakeInferenceTorch.inference_enabled is False
 
 

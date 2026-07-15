@@ -65,6 +65,8 @@ python -m pip install "trampoline>=0.1.2" "torchsde>=0.2.6"
 
 日志中的 `You need pytorch with cu130 or higher to use optimized CUDA operations` 只表示 `comfy_kitchen` 的 CUDA/Triton 优化后端被禁用。当前 `torch 2.8.0+cu128` 会回退到 eager/PyTorch 实现，不是本次导入失败原因；实际失败原因是 `trampoline` 缺失。
 
+条件编码、采样和 VAE 解码均在 PyTorch `InferenceMode` 中执行。这样常规 VAE 解码显存不足而自动回退到 tiled decode 时，ComfyUI 对输出执行原地归一化不会触发 `Inplace update to inference tensor outside InferenceMode is not allowed`。
+
 ## 兼容边界
 
 - 当前 Edit 路径兼容上述官方 Qwen Image Edit 核心节点及 ComfyUI 原生模型格式。

@@ -75,27 +75,31 @@ class ComfyUIRuntime:
         return self._sampling_node.patch_aura(model, shift)[0]
 
     def encode_edit(self, clip: Any, prompt: str, vae: Any, image1: Any, image2: Any = None, image3: Any = None) -> Any:
-        output = self._qwen_encode_node.execute(
-            clip=clip,
-            prompt=prompt,
-            vae=vae,
-            image1=image1,
-            image2=image2,
-            image3=image3,
-        )
+        with self.torch.inference_mode():
+            output = self._qwen_encode_node.execute(
+                clip=clip,
+                prompt=prompt,
+                vae=vae,
+                image1=image1,
+                image2=image2,
+                image3=image3,
+            )
         return output[0]
 
     def encode_negative(self, clip: Any, text: str) -> Any:
-        return self._negative_encode_node.encode(clip, text)
+        with self.torch.inference_mode():
+            return self._negative_encode_node.encode(clip, text)
 
     def empty_latent(self, width: int, height: int, batch_size: int) -> Any:
         return self._latent_node.generate(width, height, batch_size)
 
     def sample(self, **kwargs: Any) -> Any:
-        return self._sampler_node.sample(**kwargs)
+        with self.torch.inference_mode():
+            return self._sampler_node.sample(**kwargs)
 
     def decode(self, vae: Any, samples: Any) -> Any:
-        return self._decode_node.decode(vae, samples)
+        with self.torch.inference_mode():
+            return self._decode_node.decode(vae, samples)
 
     def cleanup(self) -> None:
         soft_empty_cache = getattr(self.model_management, "soft_empty_cache", None)
