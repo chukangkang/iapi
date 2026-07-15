@@ -164,7 +164,29 @@ class ComfyUIEditBackend:
             )
             negative_text = self.settings.comfyui_qwen_edit_negative_prompt.strip() or " "
             negative = runtime.encode_negative(clip, negative_text)[0]
-            latent = runtime.empty_latent(width, height, 1)[0]
+            # Scale image to 2048 (like ImageScaleByAspectRatio V2) and use that size for latent
+            img_width, img_height = images[0].size
+            scale_to_length = self.settings.qwen_edit_scale_to_length
+            if scale_to_length > 0:
+                # Scale by longest side
+                max_side = max(img_width, img_height)
+                if max_side > scale_to_length:
+                    scale = scale_to_length / max_side
+                    scaled_width = int(img_width * scale)
+                    scaled_height = int(img_height * scale)
+                else:
+                    scaled_width = img_width
+                    scaled_height = img_height
+                # Round to multiple of 16 (like ImageScaleByAspectRatio V2)
+                round_to_multiple = self.settings.qwen_edit_round_to_multiple
+                scaled_width = (scaled_width // round_to_multiple) * round_to_multiple
+                scaled_height = (scaled_height // round_to_multiple) * round_to_multiple
+                scaled_width = max(16, scaled_width)
+                scaled_height = max(16, scaled_height)
+            else:
+                scaled_width = img_width
+                scaled_height = img_height
+            latent = runtime.empty_latent(scaled_width, scaled_height, 1)[0]
             samples = runtime.sample(
                 model=model,
                 seed=seed if seed is not None else self.settings.comfyui_qwen_edit_default_seed,
