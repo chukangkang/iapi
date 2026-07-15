@@ -1,0 +1,53 @@
+{
+  "models": [
+    {
+      "id": "qwen-image-edit-2511",
+      "name": "Qwen Image Edit 2511 (Lightning)",
+      "description": "Qwen Image Edit 2511 with Lightning LoRA for fast editing",
+      "diffusion_model": "qwen_image_edit_2511_fp8mixed.safetensors",
+      "text_encoder": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "vae": "qwen_image_vae.safetensors",
+      "loras": [
+        {
+          "name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors",
+          "scale": 1.0
+        }
+      ],
+      "parameters": {
+        "shift": 3.1,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "steps": 4,
+        "cfg": 1.0,
+        "negative_prompt": ""
+      },
+      "metadata": {
+        "type": "image_edit",
+        "max_images": 3,
+        "supports_mask": true
+      }
+    },
+    {
+      "id": "qwen-image-2512",
+      "name": "Qwen Image 2512 (Text-to-Image)",
+      "description": "Qwen Image 2512 for text-to-image generation",
+      "diffusion_model": "qwen_image_2512_fp8mixed.safetensors",
+      "text_encoder": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "vae": "qwen_image_vae.safetensors",
+      "loras": [],
+      "parameters": {
+        "shift": 3.1,
+        "sampler": "euler",
+        "scheduler": "simple",
+        "steps": 50,
+        "cfg": 4.0,
+        "negative_prompt": "低分辨率，低画质，肢体畸形，手指畸形"
+      },
+      "metadata": {
+        "type": "text_to_image",
+        "max_images": 1,
+        "supports_mask": false
+      }
+    }
+  ]
+}
