@@ -164,9 +164,7 @@ class ComfyUIEditBackend:
             )
             negative_text = self.settings.comfyui_qwen_edit_negative_prompt.strip() or " "
             negative = runtime.encode_negative(clip, negative_text)[0]
-            # Use input image dimensions for latent to match ComfyUI workflow behavior
-            img_width, img_height = images[0].size
-            latent = runtime.empty_latent(img_width, img_height, 1)[0]
+            latent = runtime.empty_latent(width, height, 1)[0]
             samples = runtime.sample(
                 model=model,
                 seed=seed if seed is not None else self.settings.comfyui_qwen_edit_default_seed,
