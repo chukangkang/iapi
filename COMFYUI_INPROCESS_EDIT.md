@@ -55,6 +55,16 @@ pip install -r requirements-worker.txt
 
 必须保证 PyTorch/CUDA 版本与 ComfyUI 实际可运行环境一致。不能让另一个虚拟环境中的 ComfyUI 仅通过路径被导入，因为其依赖不会自动跨环境生效。
 
+ComfyUI 的 `KSampler` 会导入 `torchsde`，而 `torchsde` 还依赖 `trampoline`。本项目已在 `requirements-worker.txt` 中显式声明两者。若旧 Worker 环境出现 `No module named 'trampoline'`，请在 Worker 实际使用的解释器中重新安装：
+
+```text
+python -m pip install -r requirements-worker.txt
+# 或仅修复当前缺包：
+python -m pip install "trampoline>=0.1.2" "torchsde>=0.2.6"
+```
+
+日志中的 `You need pytorch with cu130 or higher to use optimized CUDA operations` 只表示 `comfy_kitchen` 的 CUDA/Triton 优化后端被禁用。当前 `torch 2.8.0+cu128` 会回退到 eager/PyTorch 实现，不是本次导入失败原因；实际失败原因是 `trampoline` 缺失。
+
 ## 兼容边界
 
 - 当前 Edit 路径兼容上述官方 Qwen Image Edit 核心节点及 ComfyUI 原生模型格式。

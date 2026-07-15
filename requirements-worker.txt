@@ -3,6 +3,9 @@
 torch==2.8.0+cu128
 torchvision==0.23.0+cu128
 torchaudio==2.8.0+cu128
+# ComfyUI in-process sampling imports comfy.k_diffusion -> torchsde -> trampoline.
+torchsde>=0.2.6
+trampoline>=0.1.2
 accelerate>=0.34.0
 transformers>=4.45.0
 peft>=0.13.0

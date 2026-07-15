@@ -15,6 +15,27 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
+def _comfyui_import_error(exc: BaseException) -> str:
+    missing_module = getattr(exc, "name", None)
+    if not missing_module and isinstance(exc, ModuleNotFoundError):
+        message = str(exc)
+        marker = "No module named "
+        if marker in message:
+            missing_module = message.split(marker, 1)[1].strip().strip("'\"")
+    install_hint = ""
+    if missing_module:
+        install_hint = (
+            f" Missing Python module: {missing_module!r}. Install Worker dependencies with "
+            f"`{sys.executable} -m pip install -r requirements-worker.txt`; for this specific error, "
+            f"`{sys.executable} -m pip install {missing_module}`."
+        )
+    return (
+        "Failed to import the local ComfyUI core. Install COMFYUI_PATH/requirements.txt and "
+        "requirements-worker.txt into the same Python environment used by this Worker, then verify "
+        f"that checkout starts normally.{install_hint} Original error: {exc}"
+    )
+
+
 class ComfyUIRuntime:
     """Loads the official ComfyUI Python core in this worker process."""
 
@@ -36,11 +57,7 @@ class ComfyUIRuntime:
             advanced = importlib.import_module("comfy_extras.nodes_model_advanced")
             qwen = importlib.import_module("comfy_extras.nodes_qwen")
         except Exception as exc:
-            raise RuntimeError(
-                "Failed to import the local ComfyUI core. Install COMFYUI_PATH/requirements.txt "
-                "into the same Python environment used by this Worker and verify that checkout starts normally. "
-                f"Original error: {exc}"
-            ) from exc
+            raise RuntimeError(_comfyui_import_error(exc)) from exc
         self._sampling_node = advanced.ModelSamplingAuraFlow()
         self._qwen_encode_node = qwen.TextEncodeQwenImageEditPlus
         self._negative_encode_node = self.nodes.CLIPTextEncode()

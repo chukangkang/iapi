@@ -1,7 +1,7 @@
 import pytest
 from PIL import Image
 
-from app.comfyui_edit_backend import ComfyUIEditBackend
+from app.comfyui_edit_backend import ComfyUIEditBackend, _comfyui_import_error
 from app.config import Settings
 
 
@@ -202,5 +202,13 @@ def test_missing_comfyui_source_has_actionable_error(tmp_path):
 
     with pytest.raises(RuntimeError, match="COMFYUI_PATH"):
         ComfyUIEditBackend(settings).prepare()
+
+
+def test_missing_transitive_dependency_has_install_command():
+    message = _comfyui_import_error(ModuleNotFoundError("No module named 'trampoline'"))
+
+    assert "trampoline" in message
+    assert "pip install" in message
+    assert "requirements-worker.txt" in message
 
 
