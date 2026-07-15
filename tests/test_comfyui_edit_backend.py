@@ -246,3 +246,41 @@ def test_runtime_decodes_vae_inside_inference_mode():
     assert FakeInferenceTorch.inference_enabled is False
 
 
+def test_reference_image_is_not_forced_to_latent_size(tmp_path, monkeypatch):
+    runtime = FakeRuntime()
+    backend = ComfyUIEditBackend(make_settings(tmp_path), runtime=runtime)
+    source = Image.new("RGB", (320, 180))
+    seen = []
+    monkeypatch.setattr(backend, "_pil_to_tensor", lambda image: seen.append(image.size) or "image-tensor")
+    monkeypatch.setattr(backend, "_tensor_to_pil", lambda tensor: Image.new("RGB", (1, 1)))
+
+    backend.edit(prompt="restore", negative_prompt="", image=source, width=2048, height=1152,
+                 num_inference_steps=4, seed=1, guidance_scale=1.0, strength=1.0)
+
+    assert seen == [(320, 180)]
+
+
+def test_lightning_lora_is_loaded_when_enabled(tmp_path):
+    runtime = FakeRuntime()
+    backend = ComfyUIEditBackend(make_settings(tmp_path, qwen_edit_lightning_lora_enabled=True), runtime=runtime)
+
+    backend.prepare()
+
+    assert any(call[0] == "lora" for call in runtime.calls)
+
+
+def test_workflow_defaults_use_blank_negative_and_fixed_seed(tmp_path, monkeypatch):
+    runtime = FakeRuntime()
+    backend = ComfyUIEditBackend(make_settings(tmp_path), runtime=runtime)
+    monkeypatch.setattr(backend, "_pil_to_tensor", lambda image: "image-tensor")
+    monkeypatch.setattr(backend, "_tensor_to_pil", lambda tensor: Image.new("RGB", (1, 1)))
+
+    backend.edit(prompt="restore", negative_prompt="generic API negative", image=Image.new("RGB", (8, 8)),
+                 width=512, height=512, num_inference_steps=4, seed=None, guidance_scale=1.0, strength=1.0)
+
+    negative_call = next(call for call in runtime.calls if call[0] == "negative")
+    sample_call = next(call for call in runtime.calls if call[0] == "sample")
+    assert negative_call[2] == " "
+    assert sample_call[1]["seed"] == 1
+
+

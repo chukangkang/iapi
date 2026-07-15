@@ -162,11 +162,12 @@ class ComfyUIEditBackend:
                 tensors[1] if len(tensors) > 1 else None,
                 tensors[2] if len(tensors) > 2 else None,
             )
-            negative = runtime.encode_negative(clip, negative_prompt or " ")[0]
+            negative_text = self.settings.comfyui_qwen_edit_negative_prompt.strip() or " "
+            negative = runtime.encode_negative(clip, negative_text)[0]
             latent = runtime.empty_latent(width, height, 1)[0]
             samples = runtime.sample(
                 model=model,
-                seed=seed if seed is not None else 0,
+                seed=seed if seed is not None else self.settings.comfyui_qwen_edit_default_seed,
                 steps=num_inference_steps,
                 cfg=guidance_scale,
                 sampler_name=self.settings.comfyui_qwen_edit_sampler_name,

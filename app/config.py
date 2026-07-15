@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     comfyui_qwen_edit_model_shift: float = Field(default=3.1, ge=0.0)
     comfyui_qwen_edit_sampler_name: str = "euler"
     comfyui_qwen_edit_scheduler: str = "simple"
+    comfyui_qwen_edit_negative_prompt: str = ""
+    comfyui_qwen_edit_default_seed: int = Field(default=1, ge=0)
     qwen_unblur_upscale_lora_path: str = "prithivMLmods/Qwen-Image-Edit-2511-Unblur-Upscale"
     qwen_unblur_upscale_lora_weight_name: str = "Qwen-Image-Edit-Unblur-Upscale_20.safetensors"
     qwen_unblur_upscale_lora_enabled: bool = False
