@@ -32,7 +32,7 @@ class SwinIRModelSpec:
 
 
 def _denoise_spec(level: int) -> SwinIRModelSpec:
-    filename = f"003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-M_noise{level}.pth"
+    filename = f"005_colorDN_DFWB_s128w8_SwinIR-M_noise{level}.pth"
     return SwinIRModelSpec(
         task="denoise",
         filename=filename,
@@ -49,13 +49,13 @@ def _denoise_spec(level: int) -> SwinIRModelSpec:
 
 
 def _jpeg_spec(quality: int) -> SwinIRModelSpec:
-    filename = f"006_CAR_DFWB_s126w7_SwinIR-M_jpeg{quality}.pth"
+    filename = f"006_colorCAR_DFWB_s126w7_SwinIR-M_jpeg{quality}.pth"
     return SwinIRModelSpec(
         task="jpeg",
         filename=filename,
         url=f"{SWINIR_RELEASE_BASE}/{filename}",
         window_size=7,
-        in_chans=1,
+        in_chans=3,
         img_size=126,
         embed_dim=180,
         depths=(6, 6, 6, 6, 6, 6),
@@ -124,21 +124,13 @@ class SwinIRService:
         model = self._get_model(torch, model_path, spec, device)
 
         original = image.convert("RGB")
-        if spec.in_chans == 1:
-            ycbcr = original.convert("YCbCr")
-            y, cb, cr = ycbcr.split()
-            source = np.asarray(y, dtype=np.float32)[..., None] / 255.0
-        else:
-            ycbcr = None
-            source = np.asarray(original, dtype=np.float32) / 255.0
+        ycbcr = None
+        source = np.asarray(original, dtype=np.float32) / 255.0
         tensor = torch.from_numpy(source.transpose(2, 0, 1)).unsqueeze(0).to(device)
         tensor = tensor.float() if self.settings.swinir_fp32 or device.type == "cpu" else tensor.half()
         restored = self._infer_tiled(torch, model, tensor, spec.window_size)
         output = restored.squeeze(0).float().clamp_(0, 1).cpu().numpy().transpose(1, 2, 0)
         output = (output * 255.0).round().astype("uint8")
-        if spec.in_chans == 1 and ycbcr is not None:
-            restored_y = Image.fromarray(output[..., 0], mode="L")
-            return Image.merge("YCbCr", (restored_y, cb, cr)).convert("RGB")
         return Image.fromarray(output, mode="RGB")
 
     def _resolve_device(self, torch):

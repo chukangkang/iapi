@@ -178,8 +178,14 @@ class CodeFormerService:
 
     def _get_model(self, device: Any) -> _SpandrelCodeFormer:
         import torch
-        import spandrel
-        import spandrel_extra_arches
+        try:
+            import spandrel
+            import spandrel_extra_arches
+        except ImportError as exc:
+            raise RuntimeError(
+                "CodeFormer dependencies are missing; install requirements-worker.txt "
+                "or run: python -m pip install spandrel spandrel-extra-arches"
+            ) from exc
 
         model_path = self.ensure_model_path()
         use_half = device.type == "cuda" and self.settings.torch_dtype in {"float16", "bfloat16"}

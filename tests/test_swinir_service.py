@@ -26,7 +26,7 @@ def test_swinir_selects_jpeg_model_for_block_artifacts():
 
     assert spec.task == "jpeg"
     assert spec.window_size == 7
-    assert "jpeg40" in spec.filename
+    assert "006_colorCAR_DFWB" in spec.filename
 
 
 def test_swinir_selects_denoise_model_for_noise():
@@ -36,7 +36,7 @@ def test_swinir_selects_denoise_model_for_noise():
 
     assert spec.task == "denoise"
     assert spec.window_size == 8
-    assert "noise50" in spec.filename
+    assert "005_colorDN_DFWB" in spec.filename
 
 
 def test_swinir_explicit_checkpoint_disables_download(tmp_path):

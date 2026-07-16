@@ -320,6 +320,8 @@ python -m pytest -q
 - API 入队成功但 Worker 不执行：检查 Redis 三项队列配置是否一致。
 - Redis 空等超时：`REDIS_SOCKET_TIMEOUT` 必须大于 `REDIS_BLOCK_TIMEOUT`。
 - GPU OOM：降低图片尺寸、采样步数、tile，并确保每卡只有一个 Worker。
+- SwinIR 返回 `HTTP Error 404`：旧版本使用了错误的权重名前缀；当前代码会使用官方 `005_colorDN_DFWB...` 和 `006_colorCAR_DFWB...` 文件名。更新代码后删除不完整的 `weights/SwinIR/*.part` 文件再重试。
+- CodeFormer 报 `No module named 'spandrel_extra_arches'`：在 GPU Worker 环境执行 `pip install -r requirements-worker.txt`；不要只在 API 机器安装该依赖。
 - 人脸未贴回：查看 `restoration_face_scores`、`rejection_reason`、`restoration_faces_pasted`。
 - SUPIR 503：检查 GPU、模型路径、容器日志和 `/health`；2GB 显存无法运行。
 
