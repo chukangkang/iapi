@@ -3,15 +3,13 @@
 torch==2.8.0+cu128
 torchvision==0.23.0+cu128
 torchaudio==2.8.0+cu128
-# ComfyUI in-process sampling imports comfy.k_diffusion -> torchsde -> trampoline.
-torchsde>=0.2.6
-trampoline>=0.1.2
 accelerate>=0.34.0
 transformers>=4.45.0
 peft>=0.13.0
 bitsandbytes>=0.43.3; platform_system == "Linux"
 cython
 pydantic
+numpy>=1.26.0
 basicsr>=1.4.2
 scipy>=1.14.0
 addict>=2.4.0
@@ -22,6 +20,11 @@ tb-nightly>=2.18.0a0
 yapf>=0.40.2
 facexlib>=0.3.0
 gfpgan>=1.3.8
+spandrel>=0.4.1
+spandrel-extra-arches>=0.2.0
+insightface>=0.7.3
+onnxruntime-gpu>=1.20.0; platform_system != "Darwin"
+onnxruntime>=1.20.0; platform_system == "Darwin"
 sentencepiece>=0.2.0
 protobuf>=5.27.0
 safetensors>=0.4.4

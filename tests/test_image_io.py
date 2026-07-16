@@ -70,6 +70,18 @@ def test_seed_defaults_to_42():
     assert payload.seed == 42
 
 
+def test_restoration_request_accepts_three_professional_modes():
+    for mode in ("preserve", "balanced", "creative", "auto"):
+        payload = ImageGenerationRequest(
+            prompt="restore",
+            image=_sample_base64_png(),
+            enhance_mode="restoration",
+            restoration_mode=mode,
+        )
+
+        _validate_image_payload(payload, Settings())
+
+
 def test_qwen_image_2512_uses_official_defaults():
     settings = Settings(_env_file=None)
 

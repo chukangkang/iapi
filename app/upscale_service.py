@@ -103,6 +103,7 @@ class ImageUpscaleService:
         method: str,
         fit_mode: str,
         face_enhance: Optional[bool] = None,
+        model_name: Optional[str] = None,
     ) -> Image.Image:
         return await asyncio.to_thread(
             self._upscale_sync,
@@ -112,15 +113,16 @@ class ImageUpscaleService:
             method=method,
             fit_mode=fit_mode,
             face_enhance=face_enhance,
+            model_name=model_name,
         )
 
-    async def prepare(self, *, method: str) -> None:
-        await asyncio.to_thread(self._prepare_sync, method=method)
+    async def prepare(self, *, method: str, model_name: Optional[str] = None) -> None:
+        await asyncio.to_thread(self._prepare_sync, method=method, model_name=model_name)
 
-    def _prepare_sync(self, *, method: str) -> None:
+    def _prepare_sync(self, *, method: str, model_name: Optional[str] = None) -> None:
         if method != "realesrgan":
             return
-        model_path, spec = self._resolve_realesrgan_model()
+        model_path, spec = self._resolve_realesrgan_model(model_name)
 
         _patch_torchvision_functional_tensor()
 
@@ -135,10 +137,10 @@ class ImageUpscaleService:
 
             self._get_face_enhancer(GFPGANer, upsampler)
 
-    def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str, fit_mode: str, face_enhance: Optional[bool] = None) -> Image.Image:
+    def _upscale_sync(self, image: Image.Image, *, width: int, height: int, method: str, fit_mode: str, face_enhance: Optional[bool] = None, model_name: Optional[str] = None) -> Image.Image:
         image = image.convert("RGB")
         if method == "realesrgan":
-            upscaled = self._realesrgan_upscale(image, width=width, height=height, fit_mode=fit_mode, face_enhance=face_enhance)
+            upscaled = self._realesrgan_upscale(image, width=width, height=height, fit_mode=fit_mode, face_enhance=face_enhance, model_name=model_name)
             if upscaled is not None:
                 return upscaled
         upscaled = self._fit_to_target(image, width=width, height=height, fit_mode=fit_mode)
@@ -155,8 +157,8 @@ class ImageUpscaleService:
             )
         )
 
-    def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int, fit_mode: str, face_enhance: Optional[bool] = None) -> Optional[Image.Image]:
-        model_path, spec = self._resolve_realesrgan_model()
+    def _realesrgan_upscale(self, image: Image.Image, *, width: int, height: int, fit_mode: str, face_enhance: Optional[bool] = None, model_name: Optional[str] = None) -> Optional[Image.Image]:
+        model_path, spec = self._resolve_realesrgan_model(model_name)
 
         _patch_torchvision_functional_tensor()
 
@@ -221,8 +223,8 @@ class ImageUpscaleService:
         canvas.paste(resized, ((width - resized_width) // 2, (height - resized_height) // 2))
         return canvas
 
-    def _resolve_realesrgan_model(self) -> tuple[Path, RealESRGANModelSpec]:
-        spec = self._resolve_realesrgan_model_spec()
+    def _resolve_realesrgan_model(self, model_name: Optional[str] = None) -> tuple[Path, RealESRGANModelSpec]:
+        spec = self._resolve_realesrgan_model_spec(model_name)
         raw_model_path = self.settings.realesrgan_model_path.strip()
         model_path = Path(raw_model_path) if raw_model_path else Path("weights")
 
@@ -238,8 +240,8 @@ class ImageUpscaleService:
             raise ValueError(f"REALESRGAN_MODEL_PATH must point to a .pth checkpoint, got: {model_path}")
         return model_path, spec
 
-    def _resolve_realesrgan_model_spec(self) -> RealESRGANModelSpec:
-        raw_name = self.settings.realesrgan_model_name.strip() or "realesr-general-x4v3"
+    def _resolve_realesrgan_model_spec(self, model_name: Optional[str] = None) -> RealESRGANModelSpec:
+        raw_name = (model_name or self.settings.realesrgan_model_name).strip() or "realesr-general-x4v3"
         normalized = _normalize_realesrgan_model_name(raw_name)
         spec = REALESRGAN_MODELS.get(normalized)
         if spec is not None:

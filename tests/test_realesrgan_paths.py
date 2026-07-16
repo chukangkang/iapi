@@ -15,6 +15,15 @@ def test_realesrgan_default_path_uses_weights_directory():
     assert spec.name == "realesr-general-x4v3"
 
 
+def test_realesrgan_can_select_conservative_model_per_request():
+    service = ImageUpscaleService(Settings(_env_file=None, realesrgan_model_path=""))
+
+    model_path, spec = service._resolve_realesrgan_model("RealESRNet_x4plus")
+
+    assert spec.name == "RealESRNet_x4plus"
+    assert model_path.name == "RealESRNet_x4plus.pth"
+
+
 def test_realesrgan_directory_path_appends_official_checkpoint_name(tmp_path):
     model_dir = tmp_path / "models"
     service = ImageUpscaleService(Settings(realesrgan_model_path=str(model_dir), realesrgan_model_name="RealESRGAN_x4plus.pth"))

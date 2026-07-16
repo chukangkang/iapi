@@ -1,0 +1,1 @@
+"""Standalone SUPIR restoration worker."""

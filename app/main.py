@@ -7,7 +7,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +19,14 @@ from app.config import Settings, get_settings
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
+from app.restoration import RestorationOrchestrator
+from app.restoration.codeformer_service import CodeFormerService
+from app.restoration.candidate_selector import FaceCandidateSelector
+from app.restoration.face_compositor import FaceSoftMaskCompositor
+from app.restoration.identity_service import ArcFaceIdentityService
+from app.restoration.landmark_filter import LandmarkDeformationFilter
+from app.restoration.supir_client import SupirClient
+from app.restoration.swinir_service import SwinIRService
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +79,7 @@ class ImageGenerationRequest(BaseModel):
     upscale_fit_mode: Optional[str] = None
     face_enhance: Optional[bool] = None
     qwen_edit_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    restoration_mode: Optional[Literal["auto", "preserve", "balanced", "creative"]] = None
 
     @field_validator("response_format", mode="before")
     @classmethod
@@ -160,6 +169,10 @@ _qwen_edit_service: Optional[Any] = None
 _upscale_service: Optional[Any] = None
 _storage: Optional[ImageStorage] = None
 _prompt_enhancer: Optional[Any] = None
+_supir_client: Optional[SupirClient] = None
+_swinir_service: Optional[SwinIRService] = None
+_codeformer_service: Optional[CodeFormerService] = None
+_identity_service: Optional[ArcFaceIdentityService] = None
 
 
 def _get_qwen_image_service() -> Any:
@@ -209,6 +222,34 @@ def _get_prompt_enhancer(app_settings: Settings) -> Any:
     if _prompt_enhancer is None or _prompt_enhancer.settings is not app_settings:
         _prompt_enhancer = PromptEnhancer(app_settings)
     return _prompt_enhancer
+
+
+def _get_supir_client(app_settings: Settings) -> SupirClient:
+    global _supir_client
+    if _supir_client is None or _supir_client.settings is not app_settings:
+        _supir_client = SupirClient(app_settings)
+    return _supir_client
+
+
+def _get_swinir_service(app_settings: Settings) -> SwinIRService:
+    global _swinir_service
+    if _swinir_service is None or _swinir_service.settings is not app_settings:
+        _swinir_service = SwinIRService(app_settings)
+    return _swinir_service
+
+
+def _get_codeformer_service(app_settings: Settings) -> CodeFormerService:
+    global _codeformer_service
+    if _codeformer_service is None or _codeformer_service.settings is not app_settings:
+        _codeformer_service = CodeFormerService(app_settings)
+    return _codeformer_service
+
+
+def _get_identity_service(app_settings: Settings) -> ArcFaceIdentityService:
+    global _identity_service
+    if _identity_service is None or _identity_service.settings is not app_settings:
+        _identity_service = ArcFaceIdentityService(app_settings)
+    return _identity_service
 
 
 async def _run_task_payload(payload: object, reference_image) -> ImageResponse:
@@ -525,6 +566,7 @@ async def _parse_image_request(request: Request) -> tuple[ImageGenerationRequest
             upscale_fit_mode=_optional_str(form.get("upscale_fit_mode")),
             face_enhance=_optional_bool(form.get("face_enhance")),
             qwen_edit_strength=_optional_float(form.get("qwen_edit_strength")),
+            restoration_mode=_optional_str(form.get("restoration_mode")),
         )
         if reference_image is None:
             reference_image = _payload_image_to_reference(payload.image)
@@ -572,6 +614,92 @@ async def _run_image_request(
     }
     if negative_prompt:
         metadata["negative_prompt"] = negative_prompt
+    if primary_reference_image is not None and enhance_mode == "restoration":
+        requested_restoration_mode = payload.restoration_mode or app_settings.restoration_default_mode
+        plan = RestorationOrchestrator(app_settings).plan(requested_restoration_mode, primary_reference_image)
+        metadata["restoration_mode"] = plan.mode
+        metadata["restoration_analysis"] = plan.report.to_dict()
+        metadata["restoration_model"] = plan.realesrgan_model_name
+        metadata["restoration_face_requested"] = plan.face_restoration
+        metadata["restoration_swinir_requested"] = plan.use_swinir
+        metadata["restoration_supir_requested"] = plan.use_supir
+
+        source = primary_reference_image
+        if plan.use_swinir:
+            source = await _get_swinir_service(app_settings).restore(source, report=plan.report)
+        if plan.use_qwen_edit:
+            generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
+            source = await _get_qwen_edit_service().edit(
+                prompt=prompt or app_settings.qwen_unblur_upscale_trigger_prompt,
+                negative_prompt=negative_prompt,
+                image=primary_reference_image,
+                width=generation_width,
+                height=generation_height,
+                num_inference_steps=payload.num_inference_steps or app_settings.qwen_edit_steps,
+                seed=payload.seed,
+                guidance_scale=app_settings.qwen_edit_guidance_scale,
+                strength=payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength,
+                lora_path=None,
+                lora_weight_name=None,
+                lora_scale=0.0,
+            )
+        if plan.use_supir:
+            source = await _get_supir_client(app_settings).restore(
+                source,
+                prompt=prompt or "Restore this photograph naturally while preserving identity and composition.",
+                width=output_width,
+                height=output_height,
+            )
+        image = await _get_upscale_service().upscale(
+            source,
+            width=output_width,
+            height=output_height,
+            method=plan.upscale_method,
+            fit_mode=upscale_fit_mode,
+            face_enhance=False,
+            model_name=plan.realesrgan_model_name,
+        )
+        if plan.face_restoration:
+            face_candidates = await _get_codeformer_service(app_settings).generate_candidates(image)
+            face_candidates = await _get_identity_service(app_settings).score_candidates(face_candidates)
+            face_candidates = LandmarkDeformationFilter(app_settings).filter_candidates(face_candidates)
+            face_candidates = FaceCandidateSelector(app_settings).select(face_candidates)
+            metadata["restoration_faces_detected"] = face_candidates.detected_face_count
+            metadata["restoration_face_candidates"] = len(face_candidates.candidates)
+            metadata["restoration_identity_scored"] = sum(
+                candidate.identity_score is not None for candidate in face_candidates.candidates
+            )
+            metadata["restoration_identity_accepted"] = sum(
+                candidate.identity_accepted for candidate in face_candidates.candidates
+            )
+            metadata["restoration_landmark_accepted"] = sum(
+                candidate.landmark_accepted for candidate in face_candidates.candidates
+            )
+            metadata["restoration_face_selected"] = sum(
+                candidate.selected for candidate in face_candidates.candidates
+            )
+            metadata["restoration_face_fallback"] = sum(
+                not candidate.selected for candidate in face_candidates.candidates
+            )
+            metadata["restoration_face_scores"] = [
+                {
+                    "face_index": candidate.face_index,
+                    "identity": candidate.identity_score,
+                    "landmark_rms": candidate.landmark_deformation_rms,
+                    "landmark_max": candidate.landmark_deformation_max,
+                    "quality": candidate.quality_score,
+                    "composite": candidate.composite_score,
+                    "selected": candidate.selected,
+                    "rejection_reason": candidate.rejection_reason,
+                }
+                for candidate in face_candidates.candidates
+            ]
+            composite_result = FaceSoftMaskCompositor(app_settings).composite(face_candidates)
+            image = composite_result.image
+            metadata["restoration_faces_pasted"] = composite_result.pasted_face_count
+        metadata["output_width"] = image.width
+        metadata["output_height"] = image.height
+        return _image_response(image, payload, metadata)
     if enhance_mode == "pixel":
         metadata["pixel_sharpen_enabled"] = app_settings.pixel_sharpen_enabled
         metadata["pixel_sharpen_percent"] = app_settings.pixel_sharpen_percent
@@ -690,6 +818,14 @@ async def _prepare_image_request(
     output_width, output_height = _resolve_dimensions(payload, app_settings, primary_reference_image)
     enhance_mode = _resolve_enhance_mode(payload, app_settings)
 
+    if primary_reference_image is not None and enhance_mode == "restoration":
+        requested_restoration_mode = payload.restoration_mode or app_settings.restoration_default_mode
+        plan = RestorationOrchestrator(app_settings).plan(requested_restoration_mode, primary_reference_image)
+        if plan.use_qwen_edit:
+            await _get_qwen_edit_service().prepare()
+        await _get_upscale_service().prepare(method=plan.upscale_method, model_name=plan.realesrgan_model_name)
+        return
+
     if reference_image is not None and enhance_mode in {"qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
         if reference_image_count > 1 and enhance_mode != "qwen_edit":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Multiple input images are only supported for qwen_edit mode.")
@@ -728,6 +864,14 @@ def _image_request_affinity_key(
         if enhance_mode == "realesrgan":
             return f"realesrgan:{app_settings.realesrgan_model_path}:{app_settings.realesrgan_model_name}"
         return "pixel"
+    if has_reference_image and enhance_mode == "restoration":
+        restoration_mode = payload.restoration_mode or app_settings.restoration_default_mode
+        model_by_mode = {
+            "preserve": app_settings.restoration_preserve_realesrgan_model_name,
+            "balanced": app_settings.restoration_balanced_realesrgan_model_name,
+            "creative": app_settings.restoration_creative_realesrgan_model_name,
+        }
+        return f"restoration:{restoration_mode}:{model_by_mode.get(restoration_mode, 'auto')}"
     return f"qwen_image:{app_settings.qwen_image_model_path}"
 
 
@@ -757,10 +901,10 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only n=1 is supported")
     if payload.response_format not in {"url", "b64_json"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="response_format must be 'url', 'b64_json', or 'base64'")
-    if payload.enhance_mode and payload.enhance_mode not in {"qwen_image", "pixel", "realesrgan", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
+    if payload.enhance_mode and payload.enhance_mode not in {"qwen_image", "pixel", "realesrgan", "restoration", "qwen_edit", "qwen_edit_realesrgan", "qwen_unblur_upscale", "qwen_unblur_upscale_realesrgan"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="enhance_mode must be one of: qwen_image, pixel, realesrgan, qwen_edit, qwen_edit_realesrgan, qwen_unblur_upscale, qwen_unblur_upscale_realesrgan",
+            detail="enhance_mode must be one of: qwen_image, pixel, realesrgan, restoration, qwen_edit, qwen_edit_realesrgan, qwen_unblur_upscale, qwen_unblur_upscale_realesrgan",
         )
     if payload.upscale_fit_mode and payload.upscale_fit_mode not in {"stretch", "contain", "cover"}:
         raise HTTPException(
@@ -772,6 +916,8 @@ def _validate_image_payload(payload: ImageGenerationRequest, app_settings: Setti
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="image is required for Qwen Edit enhance modes.",
         )
+    if payload.enhance_mode == "restoration" and not payload.image:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image is required for restoration mode.")
     if isinstance(payload.image, list):
         if not 1 <= len(payload.image) <= 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="image must contain one or two images")
@@ -1024,6 +1170,7 @@ async def _enhance_image_prompt(payload: ImageGenerationRequest, app_settings: S
     if payload.enhance_mode in {
         "pixel",
         "realesrgan",
+        "restoration",
         "qwen_edit",
         "qwen_edit_realesrgan",
         "qwen_unblur_upscale",
