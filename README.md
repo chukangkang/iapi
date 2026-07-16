@@ -15,7 +15,7 @@ Client → API (:8000) → Redis queue → GPU Worker(s) → MySQL/SQLite
 API/Worker ──HTTP──► 独立 SUPIR Worker (:8010, optional)
 ```
 
-生产推荐拆分 API、Redis、MySQL、GPU Worker、SUPIR Worker。单机开发使用 `SERVICE_ROLE=all`、memory 队列和 SQLite。
+生产部署固定为三类节点：API 机器（API + Redis/MySQL 客户端）、4×4090 机器（一个 Qwen 四卡分层 Worker）、另一台 GPU 机器（独立 SUPIR Worker）。单机开发才使用 `SERVICE_ROLE=all`、memory 队列和 SQLite。
 
 ## 2. 环境要求
 
@@ -26,10 +26,10 @@ API/Worker ──HTTP──► 独立 SUPIR Worker (:8010, optional)
 - 生产使用 Redis、MySQL
 - 安装 `requirements-api.txt`
 
-### GPU Worker
+### Qwen GPU Worker
 
 - Linux + NVIDIA Driver/CUDA
-- 建议每张 GPU 一个 Worker 进程；单张 4090 建议 `IMAGE_WORKER_COUNT=1`
+- 4×4090 分层加载时只启动一个 Worker 进程；不要启动四个单卡 Worker
 - 安装 `requirements-worker.txt`
 
 ### SUPIR Worker
@@ -95,7 +95,7 @@ curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/v1/models
 ```
 
-## 5. 生产 API/Worker 拆分部署
+## 5. 生产三节点部署
 
 ### 5.1 共享服务
 
@@ -130,7 +130,7 @@ MYSQL_DATABASE=iapi
 TASK_PUBLIC_BASE_URL=https://api.example.com
 ```
 
-### 5.3 GPU Worker 节点
+### 5.3 4×4090 Qwen Worker 节点
 
 ```bash
 python -m venv .venv
@@ -146,14 +146,53 @@ python -m app.worker
 SERVICE_ROLE=worker
 TASK_QUEUE_BACKEND=redis
 TASK_DB_BACKEND=mysql
-WORKER_NAME=gpu-node-01
-MODEL_GPU_IDS=0
+WORKER_NAME=qwen-4gpu-node
+MODEL_GPU_IDS=0,1,2,3
+MODEL_GPU_COUNT=4
+MODEL_GPU_MEMORY_LIMIT=
+DEVICE=auto
+QWEN_EDIT_MULTI_GPU_ENABLED=true
+QWEN_EDIT_TRANSFORMER_SHARDING_ENABLED=true
+QWEN_EDIT_DEVICE_MAP=balanced
 IMAGE_WORKER_COUNT=1
 REDIS_URL=redis://:password@redis-host:6379/0
 MYSQL_HOST=mysql-host
 ```
 
-多卡建议每张卡使用独立进程和独立 `MODEL_GPU_IDS`，不要盲目提高并发导致 OOM。
+该节点只启动一个进程：
+
+```bash
+python -m app.worker
+```
+
+不要使用 `CUDA_VISIBLE_DEVICES=0`，也不要启动四个 Worker。四张卡共同承载同一个 Qwen 模型，`IMAGE_WORKER_COUNT=1` 保证一次只处理一个 GPU 任务。
+
+如果使用 `CUDA_VISIBLE_DEVICES`，必须让进程看到全部四张卡，例如 `CUDA_VISIBLE_DEVICES=0,1,2,3`；通常直接使用 `MODEL_GPU_IDS=0,1,2,3` 即可。
+
+### 5.4 三节点连接关系
+
+```text
+API 机器
+  ├─ HTTP :8000
+  ├─ Redis 客户端 ─────────────┐
+  └─ MySQL 客户端 ─────────────┤
+                              ▼
+4×4090 机器：一个 Qwen 四卡分层 Worker
+                              │
+                              └─ HTTP ──► 独立 SUPIR Worker（另一台 GPU 机器）
+```
+
+Qwen Worker 和 SUPIR Worker 不共享 GPU。Qwen Worker 的 `.env` 配置：
+
+```env
+SUPIR_ENABLED=true
+SUPIR_BASE_URL=http://supir-host:8010
+SUPIR_API_KEY=与SUPIR Worker相同的随机密钥
+SUPIR_TIMEOUT=900
+SUPIR_ENDPOINT=/v1/restore
+```
+
+不要在 4×4090 机器上再启动 SUPIR 进程，避免 SUPIR 与 Qwen 分层模型争用显存。
 
 ## 6. 模型准备
 

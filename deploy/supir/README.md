@@ -8,7 +8,7 @@
 - 推荐 16GB 以上显存；完整 LLaVA 描述链路建议单独使用另一张 16GB GPU
 - NVIDIA Container Toolkit 和 Docker Compose v2
 
-当前开发机检测结果为 MX450 2GB 且未安装 Docker，因此不能在该机器执行真实 SUPIR 推理。
+本项目的 4×4090 Qwen Worker 不运行 SUPIR；SUPIR 必须部署到另一台独立 GPU 机器。开发机 MX450 2GB 且未安装 Docker，不能执行真实 SUPIR 推理。
 
 ## 模型准备
 
@@ -25,10 +25,12 @@ SDXL 来自 `stabilityai/stable-diffusion-xl-base-1.0`。SUPIR Q/F 权重必须�
 1. 将 `.env.example` 复制为 `.env`，设置 `SUPIR_MODELS_DIR` 和随机 API Key。
 2. 在本目录执行 `docker compose up --build -d`。
 3. 等待 `/health` 返回 `{"ready": true, "model": "Q"}`。
-4. 在 iapi Worker 中设置：
+4. 在 4×4090 Qwen Worker 的 `.env` 中设置：
    - `SUPIR_ENABLED=true`
    - `SUPIR_BASE_URL=http://<SUPIR主机>:8010`
    - `SUPIR_API_KEY=<相同API Key>`
+
+不要在 4×4090 Qwen Worker 上启动第二个 SUPIR 进程。Qwen 模型需要四卡分层显存，SUPIR 与其共机会造成显存争用。
 
 镜像固定官方提交 `bda91af2000042f8bedfec8897d92917e67c1d88`，避免上游变化破坏部署。
 
