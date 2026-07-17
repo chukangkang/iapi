@@ -21,13 +21,25 @@ class RestorationPlan:
 class RestorationOrchestrator:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.analyzer = DegradationAnalyzer()
+        self.analyzer = DegradationAnalyzer(anime_score_threshold=settings.restoration_anime_score_threshold)
 
     def plan(self, requested_mode: str, image: Image.Image) -> RestorationPlan:
         report = self.analyzer.analyze(image)
         mode = report.recommended_mode if requested_mode == "auto" else requested_mode
         if mode not in {"preserve", "balanced", "creative"}:
             raise ValueError(f"Unsupported restoration mode: {mode}")
+
+        if requested_mode == "auto" and self.settings.restoration_anime_detection_enabled and report.is_anime:
+            return RestorationPlan(
+                mode=mode,
+                report=report,
+                use_qwen_edit=False,
+                upscale_method="realesrgan",
+                realesrgan_model_name=self.settings.restoration_anime_realesrgan_model_name,
+                face_restoration=False,
+                use_swinir=False,
+                use_supir=False,
+            )
 
         if mode == "preserve":
             return RestorationPlan(

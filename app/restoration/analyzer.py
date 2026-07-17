@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 
-from PIL import Image, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 
 @dataclass(frozen=True)
@@ -11,6 +11,8 @@ class DegradationReport:
     blockiness_score: float
     exposure_score: float
     recommended_mode: str
+    anime_score: float = 0.0
+    is_anime: bool = False
 
     def to_dict(self) -> dict[str, float | str]:
         return asdict(self)
@@ -19,7 +21,12 @@ class DegradationReport:
 class DegradationAnalyzer:
     """Lightweight no-reference analysis used to select a restoration route."""
 
+    def __init__(self, *, anime_score_threshold: float = 0.58):
+        self.anime_score_threshold = anime_score_threshold
+
     def analyze(self, image: Image.Image) -> DegradationReport:
+        color_sample = image.convert("RGB")
+        color_sample.thumbnail((512, 512), Image.Resampling.BILINEAR)
         sample = image.convert("L")
         sample.thumbnail((512, 512), Image.Resampling.BILINEAR)
         edges = sample.filter(ImageFilter.FIND_EDGES)
@@ -32,6 +39,7 @@ class DegradationAnalyzer:
         noise_score = max(0.0, min(1.0, difference * 8.0))
         blockiness_score = self._blockiness(sample)
         exposure_score = self._exposure(sample)
+        anime_score = self._anime_score(color_sample)
 
         if detail_score >= 0.6 and blur_score <= 0.4:
             recommended_mode = "preserve"
@@ -46,7 +54,31 @@ class DegradationAnalyzer:
             blockiness_score=blockiness_score,
             exposure_score=exposure_score,
             recommended_mode=recommended_mode,
+            anime_score=anime_score,
+            is_anime=anime_score >= self.anime_score_threshold,
         )
+
+    @classmethod
+    def _anime_score(cls, image: Image.Image) -> float:
+        """Estimate flat-color illustration/anime style without loading another model."""
+        quantized = image.quantize(colors=32, method=Image.Quantize.MEDIANCUT).convert("RGB")
+        palette_error = cls._rgb_mean_absolute_difference(image, quantized) / 255.0
+        palette_score = max(0.0, min(1.0, 1.0 - palette_error * 14.0))
+
+        gray = image.convert("L")
+        edges = gray.filter(ImageFilter.FIND_EDGES)
+        edge_values = list(edges.get_flattened_data())
+        strong_edge_ratio = sum(value >= 48 for value in edge_values) / max(1, len(edge_values))
+        line_score = max(0.0, min(1.0, strong_edge_ratio / 0.12))
+
+        saturation = ImageStat.Stat(image.convert("HSV").getchannel("S")).mean[0] / 255.0
+        saturation_score = max(0.0, min(1.0, saturation / 0.35))
+        return max(0.0, min(1.0, palette_score * 0.65 + line_score * 0.20 + saturation_score * 0.15))
+
+    @staticmethod
+    def _rgb_mean_absolute_difference(left: Image.Image, right: Image.Image) -> float:
+        channel_means = ImageStat.Stat(ImageChops.difference(left, right)).mean
+        return sum(channel_means) / max(1, len(channel_means))
 
     @staticmethod
     def _mean_absolute_difference(left: Image.Image, right: Image.Image) -> float:

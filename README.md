@@ -220,6 +220,8 @@ SUPIR_ENDPOINT=/v1/restore
 | `creative` | 可使用 Qwen Edit 和独立 SUPIR |
 | `auto` | 根据模糊、噪声、块效应和细节选择 preserve/balanced |
 
+`auto` 还会根据颜色量化误差、强边缘比例和饱和度估算动漫/插画风格。命中后使用 `RealESRGAN_x4plus_anime_6B`，并跳过面向照片的 SwinIR 与 CodeFormer/ArcFace 人脸链路，避免动漫五官被照片模型重建。
+
 人脸候选顺序：CodeFormer → ArcFace → 五点关键点形变过滤 → 综合评分 → 软遮罩贴回。任何候选不安全都会自动回退原始人脸。
 
 重要配置：
@@ -239,6 +241,9 @@ FACE_CANDIDATE_IDENTITY_WEIGHT=0.50
 FACE_CANDIDATE_GEOMETRY_WEIGHT=0.30
 FACE_CANDIDATE_QUALITY_WEIGHT=0.15
 FACE_CANDIDATE_DETECTION_WEIGHT=0.05
+RESTORATION_ANIME_DETECTION_ENABLED=true
+RESTORATION_ANIME_SCORE_THRESHOLD=0.58
+RESTORATION_ANIME_REALESRGAN_MODEL_NAME=RealESRGAN_x4plus_anime_6B
 ```
 
 ## 8. 独立 SUPIR Worker

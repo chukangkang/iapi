@@ -78,3 +78,38 @@ def test_auto_mode_uses_analyzer_recommendation():
     plan = orchestrator.plan("auto", Image.new("RGB", (64, 64), "gray"))
 
     assert plan.mode == "balanced"
+
+
+def test_auto_mode_routes_anime_image_to_anime_realesrgan():
+    settings = Settings(
+        _env_file=None,
+        codeformer_enabled=True,
+        swinir_enabled=True,
+        restoration_anime_detection_enabled=True,
+        restoration_anime_score_threshold=0.45,
+    )
+    image = Image.new("RGB", (128, 128), (245, 235, 210))
+    for x in range(16, 112):
+        image.putpixel((x, 24), (20, 20, 30))
+        image.putpixel((x, 104), (20, 20, 30))
+    for y in range(24, 105):
+        image.putpixel((16, y), (20, 20, 30))
+        image.putpixel((111, y), (20, 20, 30))
+    for y in range(25, 104):
+        for x in range(17, 111):
+            image.putpixel((x, y), (90, 70, 150) if x < 64 else (190, 165, 110))
+
+    plan = RestorationOrchestrator(settings).plan("auto", image)
+
+    assert plan.report.is_anime is True
+    assert plan.realesrgan_model_name == "RealESRGAN_x4plus_anime_6B"
+    assert plan.face_restoration is False
+
+
+def test_explicit_preserve_mode_does_not_force_anime_model():
+    settings = Settings(_env_file=None, restoration_anime_detection_enabled=True)
+    image = Image.new("RGB", (64, 64), (220, 180, 100))
+
+    plan = RestorationOrchestrator(settings).plan("preserve", image)
+
+    assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
