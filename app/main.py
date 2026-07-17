@@ -623,33 +623,55 @@ async def _run_image_request(
         metadata["restoration_face_requested"] = plan.face_restoration
         metadata["restoration_swinir_requested"] = plan.use_swinir
         metadata["restoration_supir_requested"] = plan.use_supir
+        metadata["restoration_severe_blur"] = plan.severe_blur
+        metadata["restoration_qwen_unblur_lora_requested"] = plan.use_qwen_unblur_lora
 
         source = primary_reference_image
         if plan.use_swinir:
             source = await _get_swinir_service(app_settings).restore(source, report=plan.report)
         if plan.use_qwen_edit:
             generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
+            severe_lora_path, severe_lora_weight_name = _resolve_qwen_unblur_lora(
+                plan.use_qwen_unblur_lora,
+                app_settings,
+            )
+            restoration_prompt = (
+                app_settings.restoration_severe_blur_prompt
+                if plan.severe_blur
+                else prompt or app_settings.qwen_unblur_upscale_trigger_prompt
+            )
             source = await _get_qwen_edit_service().edit(
-                prompt=prompt or app_settings.qwen_unblur_upscale_trigger_prompt,
+                prompt=restoration_prompt,
                 negative_prompt=negative_prompt,
-                image=primary_reference_image,
+                image=source,
                 width=generation_width,
                 height=generation_height,
                 num_inference_steps=payload.num_inference_steps or app_settings.qwen_edit_steps,
                 seed=payload.seed,
                 guidance_scale=app_settings.qwen_edit_guidance_scale,
-                strength=payload.qwen_edit_strength if payload.qwen_edit_strength is not None else app_settings.qwen_edit_strength,
-                lora_path=None,
-                lora_weight_name=None,
-                lora_scale=0.0,
+                strength=(
+                    payload.qwen_edit_strength
+                    if payload.qwen_edit_strength is not None
+                    else app_settings.restoration_severe_blur_qwen_strength
+                    if plan.severe_blur
+                    else app_settings.qwen_edit_strength
+                ),
+                lora_path=severe_lora_path,
+                lora_weight_name=severe_lora_weight_name,
+                lora_scale=app_settings.qwen_unblur_upscale_lora_scale,
             )
+            if plan.severe_blur:
+                source = _get_qwen_edit_service().align_to_reference(source, primary_reference_image)
+                metadata["restoration_generative_backend"] = "qwen_edit"
         if plan.use_supir:
             source = await _get_supir_client(app_settings).restore(
                 source,
-                prompt=prompt or "Restore this photograph naturally while preserving identity and composition.",
+                prompt=app_settings.restoration_severe_blur_prompt if plan.severe_blur else prompt or "Restore this photograph naturally while preserving identity and composition.",
                 width=output_width,
                 height=output_height,
             )
+            if plan.severe_blur:
+                metadata["restoration_generative_backend"] = "supir"
         image = await _get_upscale_service().upscale(
             source,
             width=output_width,
@@ -822,7 +844,14 @@ async def _prepare_image_request(
         requested_restoration_mode = payload.restoration_mode or app_settings.restoration_default_mode
         plan = RestorationOrchestrator(app_settings).plan(requested_restoration_mode, primary_reference_image)
         if plan.use_qwen_edit:
-            await _get_qwen_edit_service().prepare()
+            severe_lora_path, severe_lora_weight_name = _resolve_qwen_unblur_lora(
+                plan.use_qwen_unblur_lora,
+                app_settings,
+            )
+            await _get_qwen_edit_service().prepare(
+                lora_path=severe_lora_path,
+                lora_weight_name=severe_lora_weight_name,
+            )
         await _get_upscale_service().prepare(method=plan.upscale_method, model_name=plan.realesrgan_model_name)
         return
 

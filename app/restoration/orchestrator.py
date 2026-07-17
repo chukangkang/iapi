@@ -20,6 +20,8 @@ class RestorationPlan:
     face_restoration: bool
     use_swinir: bool
     use_supir: bool
+    severe_blur: bool = False
+    use_qwen_unblur_lora: bool = False
 
 
 class RestorationOrchestrator:
@@ -53,6 +55,36 @@ class RestorationOrchestrator:
                 use_swinir=False,
                 use_supir=False,
             )
+
+        severe_blur = (
+            requested_mode == "auto"
+            and self.settings.restoration_severe_blur_enabled
+            and report.blur_score >= self.settings.restoration_severe_blur_threshold
+        )
+        if severe_blur:
+            supir_available = self.settings.supir_enabled and bool(self.settings.supir_base_url.strip())
+            use_supir = self.settings.restoration_severe_blur_prefer_supir and supir_available
+            use_qwen_edit = not use_supir and self.settings.restoration_severe_blur_use_qwen_edit
+            if use_supir or use_qwen_edit:
+                route = "SUPIR" if use_supir else "Qwen Edit"
+                logger.info(
+                    "Auto restoration escalated severe blur to %s: blur_score=%.3f threshold=%.3f",
+                    route,
+                    report.blur_score,
+                    self.settings.restoration_severe_blur_threshold,
+                )
+                return RestorationPlan(
+                    mode=mode,
+                    report=report,
+                    use_qwen_edit=use_qwen_edit,
+                    upscale_method="realesrgan",
+                    realesrgan_model_name=self.settings.restoration_creative_realesrgan_model_name,
+                    face_restoration=self.settings.codeformer_enabled,
+                    use_swinir=False,
+                    use_supir=use_supir,
+                    severe_blur=True,
+                    use_qwen_unblur_lora=use_qwen_edit and self.settings.qwen_unblur_upscale_lora_enabled,
+                )
 
         if mode == "preserve":
             return RestorationPlan(

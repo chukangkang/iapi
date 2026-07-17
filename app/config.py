@@ -120,6 +120,17 @@ class Settings(BaseSettings):
     restoration_anime_detection_enabled: bool = True
     restoration_anime_score_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
     restoration_anime_realesrgan_model_name: str = "RealESRGAN_x4plus_anime_6B"
+    restoration_severe_blur_enabled: bool = True
+    restoration_severe_blur_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    restoration_severe_blur_prefer_supir: bool = True
+    restoration_severe_blur_use_qwen_edit: bool = True
+    restoration_severe_blur_qwen_strength: float = Field(default=0.45, ge=0.0, le=1.0)
+    restoration_severe_blur_prompt: str = (
+        "Restore this severely blurred photograph naturally. Recover only plausible high-frequency details, "
+        "clear edges, and natural texture. Strictly preserve subject identity, facial geometry, expression, "
+        "colors, pose, composition, text, logos, background, and object positions. Avoid plastic skin, "
+        "over-smoothing, halos, invented objects, and identity changes."
+    )
     swinir_enabled: bool = False
     swinir_model_path: str = ""
     swinir_auto_download: bool = True
@@ -148,7 +159,7 @@ class Settings(BaseSettings):
     supir_enabled: bool = False
     supir_base_url: str = ""
     supir_api_key: str = ""
-    supir_timeout: float = Field(default=300.0, gt=0.0)
+    supir_timeout: float = Field(default=900.0, gt=0.0)
     supir_endpoint: str = "/v1/restore"
     image_worker_count: int = Field(default=1, ge=1)
     image_queue_maxsize: int = Field(default=100, ge=1)

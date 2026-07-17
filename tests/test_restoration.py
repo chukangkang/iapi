@@ -80,6 +80,52 @@ def test_auto_mode_uses_analyzer_recommendation():
     assert plan.mode == "balanced"
 
 
+def test_auto_mode_escalates_severe_photo_blur_to_qwen_hd_restoration():
+    settings = Settings(
+        _env_file=None,
+        restoration_severe_blur_enabled=True,
+        restoration_severe_blur_threshold=0.8,
+        supir_enabled=False,
+    )
+
+    plan = RestorationOrchestrator(settings).plan("auto", Image.new("RGB", (96, 96), "gray"))
+
+    assert plan.severe_blur is True
+    assert plan.use_qwen_edit is True
+    assert plan.use_supir is False
+    assert plan.realesrgan_model_name == settings.restoration_creative_realesrgan_model_name
+
+
+def test_auto_mode_prefers_supir_for_severe_blur_when_available():
+    settings = Settings(
+        _env_file=None,
+        restoration_severe_blur_enabled=True,
+        restoration_severe_blur_threshold=0.8,
+        restoration_severe_blur_prefer_supir=True,
+        supir_enabled=True,
+        supir_base_url="http://supir-worker:8010",
+    )
+
+    plan = RestorationOrchestrator(settings).plan("auto", Image.new("RGB", (96, 96), "gray"))
+
+    assert plan.severe_blur is True
+    assert plan.use_supir is True
+    assert plan.use_qwen_edit is False
+
+
+def test_auto_mode_can_disable_severe_blur_escalation():
+    settings = Settings(
+        _env_file=None,
+        restoration_severe_blur_enabled=False,
+        restoration_severe_blur_threshold=0.8,
+    )
+
+    plan = RestorationOrchestrator(settings).plan("auto", Image.new("RGB", (96, 96), "gray"))
+
+    assert plan.severe_blur is False
+    assert plan.use_qwen_edit is False
+
+
 def test_auto_mode_routes_anime_image_to_anime_realesrgan():
     settings = Settings(
         _env_file=None,
