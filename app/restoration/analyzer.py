@@ -60,23 +60,80 @@ class DegradationAnalyzer:
 
     @classmethod
     def _anime_score(cls, image: Image.Image) -> float:
-        """Estimate flat-color illustration/anime style without loading another model."""
-        quantized = image.quantize(colors=32, method=Image.Quantize.MEDIANCUT).convert("RGB")
+        """Estimate line-art/flat-color style without loading a classifier model."""
+        quantized = image.quantize(colors=16, method=Image.Quantize.MEDIANCUT).convert("RGB")
         palette_error = cls._rgb_mean_absolute_difference(image, quantized) / 255.0
-        palette_score = max(0.0, min(1.0, 1.0 - palette_error * 14.0))
+        palette_score = cls._clamp_score(1.0 - palette_error * 22.0)
 
         gray = image.convert("L")
-        edges = gray.filter(ImageFilter.FIND_EDGES)
-        edge_values = list(edges.get_flattened_data())
-        strong_edge_ratio = sum(value >= 48 for value in edge_values) / max(1, len(edge_values))
-        line_score = max(0.0, min(1.0, strong_edge_ratio / 0.12))
+        raw_edge_histogram, raw_edge_pixels = cls._interior_histogram(gray.filter(ImageFilter.FIND_EDGES))
+        smoothed = gray.filter(ImageFilter.GaussianBlur(radius=0.8))
+        smooth_edge_histogram, smooth_edge_pixels = cls._interior_histogram(
+            smoothed.filter(ImageFilter.FIND_EDGES)
+        )
+        raw_edge_ratio = sum(raw_edge_histogram[48:]) / max(1, raw_edge_pixels)
+        smooth_edge_ratio = sum(smooth_edge_histogram[32:]) / max(1, smooth_edge_pixels)
+        edge_persistence = smooth_edge_ratio / max(raw_edge_ratio, 1e-6)
+        line_score = min(
+            cls._clamp_score(raw_edge_ratio / 0.06),
+            cls._clamp_score(smooth_edge_ratio / 0.04),
+            cls._clamp_score(edge_persistence / 0.65),
+        )
+
+        difference_histogram, difference_pixels = cls._neighbor_difference_histogram(gray)
+        flat_pixel_ratio = sum(difference_histogram[:3]) / max(1, difference_pixels)
+        flat_color_score = cls._clamp_score((flat_pixel_ratio - 0.55) / 0.30)
+
+        smooth_difference_histogram, smooth_difference_pixels = cls._neighbor_difference_histogram(smoothed)
+        continuous_tone_ratio = sum(smooth_difference_histogram[2:13]) / max(1, smooth_difference_pixels)
+        flat_tone_score = cls._clamp_score(1.0 - (continuous_tone_ratio - 0.10) / 0.30)
 
         saturation = ImageStat.Stat(image.convert("HSV").getchannel("S")).mean[0] / 255.0
-        saturation_score = max(0.0, min(1.0, saturation / 0.35))
-        # Flat or noisy photographs can quantize well, so palette score alone is
-        # never sufficient. Anime requires both coherent line work and color.
-        structure_gate = min(line_score, max(0.0, min(1.0, saturation_score * 1.5)))
-        return max(0.0, min(1.0, palette_score * 0.45 + line_score * 0.25 + saturation_score * 0.15 + structure_gate * 0.15))
+        saturation_score = cls._clamp_score(saturation / 0.30)
+
+        base_score = (
+            palette_score * 0.30
+            + line_score * 0.25
+            + saturation_score * 0.10
+            + flat_color_score * 0.20
+            + flat_tone_score * 0.15
+        )
+        # Photographs can have a compact palette and many strong edges. Requiring
+        # edges that survive light blur plus large flat regions prevents textured
+        # scenes and real faces from crossing the anime threshold.
+        structure_gate = 0.65 + line_score * 0.35
+        tone_gate = 0.65 + flat_tone_score * 0.35
+        return cls._clamp_score(base_score * structure_gate * tone_gate)
+
+    @staticmethod
+    def _clamp_score(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    @staticmethod
+    def _interior_histogram(image: Image.Image) -> tuple[list[int], int]:
+        if image.width > 2 and image.height > 2:
+            image = image.crop((1, 1, image.width - 1, image.height - 1))
+        return image.histogram(), image.width * image.height
+
+    @staticmethod
+    def _neighbor_difference_histogram(image: Image.Image) -> tuple[list[int], int]:
+        histogram = [0] * 256
+        pixel_count = 0
+        if image.width > 1:
+            horizontal = ImageChops.difference(
+                image.crop((1, 0, image.width, image.height)),
+                image.crop((0, 0, image.width - 1, image.height)),
+            )
+            histogram = [left + right for left, right in zip(histogram, horizontal.histogram())]
+            pixel_count += horizontal.width * horizontal.height
+        if image.height > 1:
+            vertical = ImageChops.difference(
+                image.crop((0, 1, image.width, image.height)),
+                image.crop((0, 0, image.width, image.height - 1)),
+            )
+            histogram = [left + right for left, right in zip(histogram, vertical.histogram())]
+            pixel_count += vertical.width * vertical.height
+        return histogram, pixel_count
 
     @staticmethod
     def _rgb_mean_absolute_difference(left: Image.Image, right: Image.Image) -> float:

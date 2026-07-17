@@ -1,3 +1,5 @@
+import math
+
 from PIL import Image, ImageFilter
 
 from app.config import Settings
@@ -149,6 +151,39 @@ def test_auto_mode_routes_anime_image_to_anime_realesrgan():
 
     assert plan.report.is_anime is True
     assert plan.realesrgan_model_name == "RealESRGAN_x4plus_anime_6B"
+    assert plan.face_restoration is False
+
+
+def test_auto_mode_does_not_route_continuous_tone_photo_to_anime_model():
+    settings = Settings(
+        _env_file=None,
+        restoration_anime_detection_enabled=True,
+        restoration_anime_score_threshold=0.68,
+    )
+    image = Image.new("RGB", (160, 240))
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            luminance = int(
+                120
+                + 35 * math.sin(x / 9)
+                + 25 * math.sin(y / 13)
+                + ((x * 37 + y * 61) % 17)
+                - 8
+            )
+            luminance = max(0, min(255, luminance))
+            pixels[x, y] = (luminance, max(0, luminance - 8), max(0, luminance - 14))
+    for x in range(0, image.width, 16):
+        for y in range(image.height):
+            image.putpixel((x, y), (30, 35, 40))
+    for y in range(0, image.height, 18):
+        for x in range(image.width):
+            image.putpixel((x, y), (45, 48, 52))
+
+    plan = RestorationOrchestrator(settings).plan("auto", image)
+
+    assert plan.report.is_anime is False
+    assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
     assert plan.face_restoration is False
 
 
