@@ -36,6 +36,7 @@ def test_swinir_selects_denoise_model_for_noise():
 
     assert spec.task == "denoise"
     assert spec.window_size == 8
+    assert spec.img_size == 128
     assert "005_colorDN_DFWB" in spec.filename
 
 

@@ -322,6 +322,7 @@ python -m pytest -q
 - GPU OOM：降低图片尺寸、采样步数、tile，并确保每卡只有一个 Worker。
 - SwinIR 返回 `HTTP Error 404`：旧版本使用了错误的权重名前缀；当前代码会使用官方 `005_colorDN_DFWB...` 和 `006_colorCAR_DFWB...` 文件名。更新代码后删除不完整的 `weights/SwinIR/*.part` 文件再重试。
 - CodeFormer 报 `No module named 'spandrel_extra_arches'`：在 GPU Worker 环境执行 `pip install -r requirements-worker.txt`；不要只在 API 机器安装该依赖。
+- SwinIR 报 `attn_mask size mismatch`：说明模型结构参数与官方权重不一致。当前彩色降噪模型必须使用 `img_size=128`、`window_size=8`；JPEG 彩色模型必须使用 `img_size=126`、`window_size=7`。
 - 人脸未贴回：查看 `restoration_face_scores`、`rejection_reason`、`restoration_faces_pasted`。
 - SUPIR 503：检查 GPU、模型路径、容器日志和 `/health`；2GB 显存无法运行。
 

@@ -39,7 +39,7 @@ def _denoise_spec(level: int) -> SwinIRModelSpec:
         url=f"{SWINIR_RELEASE_BASE}/{filename}",
         window_size=8,
         in_chans=3,
-        img_size=64,
+        img_size=128,
         embed_dim=180,
         depths=(6, 6, 6, 6, 6, 6),
         num_heads=(6, 6, 6, 6, 6, 6),
