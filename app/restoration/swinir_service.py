@@ -129,9 +129,16 @@ class SwinIRService:
         tensor = torch.from_numpy(source.transpose(2, 0, 1)).unsqueeze(0).to(device)
         tensor = tensor.float() if self.settings.swinir_fp32 or device.type == "cpu" else tensor.half()
         restored = self._infer_tiled(torch, model, tensor, spec.window_size)
-        output = restored.squeeze(0).float().clamp_(0, 1).cpu().numpy().transpose(1, 2, 0)
+        output = self._normalize_output_tensor(restored).cpu().numpy().transpose(1, 2, 0)
         output = (output * 255.0).round().astype("uint8")
         return Image.fromarray(output, mode="RGB")
+
+    @staticmethod
+    def _normalize_output_tensor(tensor):
+        # torch.inference_mode() creates inference tensors that cannot be
+        # modified in place after leaving the context. Use an out-of-place
+        # clamp so newer PyTorch releases do not raise at post-processing.
+        return tensor.squeeze(0).float().clamp(0, 1)
 
     def _resolve_device(self, torch):
         if self.settings.device == "cpu" or not torch.cuda.is_available():

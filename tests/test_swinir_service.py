@@ -72,3 +72,30 @@ def test_swinir_defaults_to_fp32_for_basicsr_compatibility():
     settings = Settings(_env_file=None)
 
     assert settings.swinir_fp32 is True
+
+
+def test_swinir_normalizes_inference_output_without_inplace_update():
+    tensor = FakeInferenceTensor()
+
+    normalized = SwinIRService._normalize_output_tensor(tensor)
+
+    assert normalized is tensor
+    assert tensor.used_out_of_place_clamp is True
+
+
+class FakeInferenceTensor:
+    def __init__(self):
+        self.used_out_of_place_clamp = False
+
+    def squeeze(self, _dimension):
+        return self
+
+    def float(self):
+        return self
+
+    def clamp(self, _minimum, _maximum):
+        self.used_out_of_place_clamp = True
+        return self
+
+    def clamp_(self, *_args):
+        raise AssertionError("inference tensors must not be updated in place")
