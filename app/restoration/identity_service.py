@@ -107,8 +107,7 @@ class ArcFaceIdentityService:
         return np.asarray(image.convert("RGB"))[:, :, ::-1].copy()
 
     def _get_analyzer(self) -> Any:
-        import onnxruntime as ort
-        from insightface.app import FaceAnalysis
+        ort, FaceAnalysis = self._insightface_runtime()
 
         available = set(ort.get_available_providers())
         providers = []
@@ -124,13 +123,38 @@ class ArcFaceIdentityService:
         )
         if self._analyzer is not None and self._analyzer_key == key:
             return self._analyzer
-        analyzer = FaceAnalysis(
+        try:
+            analyzer = self._create_analyzer(FaceAnalysis, providers, ctx_id)
+        except Exception as exc:
+            if providers[0] != "CUDAExecutionProvider":
+                raise
+            logger.warning("InsightFace CUDA provider failed; retrying CPU provider: %s", exc)
+            providers = ["CPUExecutionProvider"]
+            ctx_id = -1
+            key = (
+                self.settings.insightface_model_name,
+                str(Path(self.settings.insightface_model_root).resolve()),
+                tuple(providers),
+                ctx_id,
+            )
+            analyzer = self._create_analyzer(FaceAnalysis, providers, ctx_id)
+        self._analyzer = analyzer
+        self._analyzer_key = key
+        return analyzer
+
+    def _create_analyzer(self, face_analysis, providers: list[str], ctx_id: int) -> Any:
+        analyzer = face_analysis(
             name=self.settings.insightface_model_name,
             root=self.settings.insightface_model_root,
             providers=providers,
             allowed_modules=["detection", "recognition"],
         )
         analyzer.prepare(ctx_id=ctx_id, det_size=(512, 512))
-        self._analyzer = analyzer
-        self._analyzer_key = key
         return analyzer
+
+    @staticmethod
+    def _insightface_runtime():
+        import onnxruntime as ort
+        from insightface.app import FaceAnalysis
+
+        return ort, FaceAnalysis

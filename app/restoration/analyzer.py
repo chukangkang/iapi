@@ -21,7 +21,7 @@ class DegradationReport:
 class DegradationAnalyzer:
     """Lightweight no-reference analysis used to select a restoration route."""
 
-    def __init__(self, *, anime_score_threshold: float = 0.58):
+    def __init__(self, *, anime_score_threshold: float = 0.72):
         self.anime_score_threshold = anime_score_threshold
 
     def analyze(self, image: Image.Image) -> DegradationReport:
@@ -73,7 +73,10 @@ class DegradationAnalyzer:
 
         saturation = ImageStat.Stat(image.convert("HSV").getchannel("S")).mean[0] / 255.0
         saturation_score = max(0.0, min(1.0, saturation / 0.35))
-        return max(0.0, min(1.0, palette_score * 0.65 + line_score * 0.20 + saturation_score * 0.15))
+        # Flat or noisy photographs can quantize well, so palette score alone is
+        # never sufficient. Anime requires both coherent line work and color.
+        structure_gate = min(line_score, max(0.0, min(1.0, saturation_score * 1.5)))
+        return max(0.0, min(1.0, palette_score * 0.45 + line_score * 0.25 + saturation_score * 0.15 + structure_gate * 0.15))
 
     @staticmethod
     def _rgb_mean_absolute_difference(left: Image.Image, right: Image.Image) -> float:

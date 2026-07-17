@@ -118,14 +118,14 @@ class Settings(BaseSettings):
     restoration_balanced_realesrgan_model_name: str = "realesr-general-x4v3"
     restoration_creative_realesrgan_model_name: str = "RealESRGAN_x4plus"
     restoration_anime_detection_enabled: bool = True
-    restoration_anime_score_threshold: float = Field(default=0.58, ge=0.0, le=1.0)
+    restoration_anime_score_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
     restoration_anime_realesrgan_model_name: str = "RealESRGAN_x4plus_anime_6B"
     swinir_enabled: bool = False
     swinir_model_path: str = ""
     swinir_auto_download: bool = True
     swinir_tile: int = Field(default=512, ge=0)
     swinir_tile_overlap: int = Field(default=32, ge=0)
-    swinir_fp32: bool = False
+    swinir_fp32: bool = True
     swinir_gpu_id: Optional[int] = None
     codeformer_enabled: bool = False
     codeformer_model_path: str = "weights/CodeFormer/codeformer.pth"

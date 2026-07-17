@@ -242,7 +242,7 @@ FACE_CANDIDATE_GEOMETRY_WEIGHT=0.30
 FACE_CANDIDATE_QUALITY_WEIGHT=0.15
 FACE_CANDIDATE_DETECTION_WEIGHT=0.05
 RESTORATION_ANIME_DETECTION_ENABLED=true
-RESTORATION_ANIME_SCORE_THRESHOLD=0.58
+RESTORATION_ANIME_SCORE_THRESHOLD=0.72
 RESTORATION_ANIME_REALESRGAN_MODEL_NAME=RealESRGAN_x4plus_anime_6B
 ```
 
@@ -294,7 +294,7 @@ curl -X POST http://127.0.0.1:8000/v1/images/edits \
   -F "prompt=自然修复照片，保持人物身份、文字和构图" \
   -F "image=@input.png" \
   -F "enhance_mode=restoration" \
-  -F "restoration_mode=balanced" \
+  -F "restoration_mode=auto" \
   -F "resolution=4k"
 
 curl http://127.0.0.1:8000/v1/images/tasks/<task_id>

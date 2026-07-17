@@ -86,6 +86,35 @@ def test_arcface_isolates_candidate_without_detectable_embedding(monkeypatch):
     assert scored.candidates[1].identity_accepted is False
 
 
+def test_arcface_retries_cpu_when_cuda_provider_initialization_fails(monkeypatch):
+    service = ArcFaceIdentityService(Settings(_env_file=None, device="auto"))
+    attempts = []
+
+    class FakeOrt:
+        @staticmethod
+        def get_available_providers():
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    class FakeAnalysis:
+        def __init__(self, *, providers, **_kwargs):
+            attempts.append(tuple(providers))
+            if providers[0] == "CUDAExecutionProvider":
+                raise RuntimeError("libcudart.so.13 missing")
+
+        def prepare(self, **_kwargs):
+            pass
+
+    monkeypatch.setattr(service, "_insightface_runtime", lambda: (FakeOrt, FakeAnalysis))
+
+    analyzer = service._get_analyzer()
+
+    assert analyzer is not None
+    assert attempts == [
+        ("CUDAExecutionProvider", "CPUExecutionProvider"),
+        ("CPUExecutionProvider",),
+    ]
+
+
 class FakeFace:
     def __init__(self, embedding):
         self.normed_embedding = embedding

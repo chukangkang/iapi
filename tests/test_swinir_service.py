@@ -66,3 +66,9 @@ async def test_disabled_swinir_returns_original_image():
     restored = await service.restore(image, report=_report(noise=0.5))
 
     assert restored is image
+
+
+def test_swinir_defaults_to_fp32_for_basicsr_compatibility():
+    settings = Settings(_env_file=None)
+
+    assert settings.swinir_fp32 is True

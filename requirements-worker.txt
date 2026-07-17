@@ -23,7 +23,8 @@ gfpgan>=1.3.8
 spandrel>=0.4.1
 spandrel-extra-arches>=0.2.0
 insightface>=0.7.3
-onnxruntime-gpu>=1.20.0; platform_system != "Darwin"
+# 固定 CUDA 12 构建；无上界会安装要求 libcudart.so.13 的 CUDA 13 wheel。
+onnxruntime-gpu>=1.20.0,<1.23.0; platform_system != "Darwin"
 onnxruntime>=1.20.0; platform_system == "Darwin"
 sentencepiece>=0.2.0
 protobuf>=5.27.0
