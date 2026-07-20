@@ -29,21 +29,20 @@ class DegradationAnalyzer:
         color_sample.thumbnail((512, 512), Image.Resampling.BILINEAR)
         sample = image.convert("L")
         sample.thumbnail((512, 512), Image.Resampling.BILINEAR)
-        edges = sample.filter(ImageFilter.FIND_EDGES)
-        edge_mean = ImageStat.Stat(edges).mean[0] / 255.0
-        detail_score = max(0.0, min(1.0, edge_mean * 4.0))
+        detail_score = self._edge_detail_score(sample)
         blur_score = 1.0 - detail_score
 
         denoised = sample.filter(ImageFilter.MedianFilter(size=3))
         difference = self._mean_absolute_difference(sample, denoised) / 255.0
-        noise_score = max(0.0, min(1.0, difference * 8.0))
+        directional_balance = self._directional_activity_balance(sample, threshold=8)
+        noise_score = self._clamp_score(difference * 8.0 * directional_balance)
         blockiness_score = self._blockiness(sample)
         exposure_score = self._exposure(sample)
         anime_score = self._anime_score(color_sample)
 
-        if detail_score >= 0.6 and blur_score <= 0.4:
-            recommended_mode = "preserve"
-        elif blur_score >= 0.65 or noise_score >= 0.45 or blockiness_score >= 0.35:
+        if noise_score >= 0.45 or blockiness_score >= 0.35:
+            recommended_mode = "balanced"
+        elif blur_score >= 0.65:
             recommended_mode = "balanced"
         else:
             recommended_mode = "preserve"
@@ -57,6 +56,44 @@ class DegradationAnalyzer:
             anime_score=anime_score,
             is_anime=anime_score >= self.anime_score_threshold,
         )
+
+    @classmethod
+    def _edge_detail_score(cls, image: Image.Image) -> float:
+        """Measure edge sharpness independently of how much texture an image contains."""
+        edge_histogram, edge_pixels = cls._neighbor_difference_histogram(image)
+        edge_strength = cls._top_histogram_mean(edge_histogram, edge_pixels, fraction=0.01)
+        if edge_strength <= 0.0:
+            return 0.0
+
+        smoothed = image.filter(ImageFilter.GaussianBlur(radius=0.8))
+        smooth_histogram, smooth_pixels = cls._neighbor_difference_histogram(smoothed)
+        smooth_strength = cls._top_histogram_mean(smooth_histogram, smooth_pixels, fraction=0.01)
+        edge_decay = edge_strength / max(smooth_strength, 1e-6)
+
+        # Crisp edges lose substantially more contrast under a light blur than
+        # already-blurred edges. Looking only at the strongest one percent keeps
+        # smooth skin/background areas from making a clear portrait look blurry.
+        sharpness_score = cls._clamp_score((edge_decay - 1.04) / 0.30)
+        edge_evidence = cls._clamp_score(edge_strength / 8.0)
+        return sharpness_score * edge_evidence
+
+    @staticmethod
+    def _top_histogram_mean(
+        histogram: list[int],
+        pixel_count: int,
+        *,
+        fraction: float,
+    ) -> float:
+        target_count = max(1, round(pixel_count * fraction))
+        selected_count = 0
+        weighted_sum = 0
+        for value in range(len(histogram) - 1, -1, -1):
+            count = min(histogram[value], target_count - selected_count)
+            weighted_sum += value * count
+            selected_count += count
+            if selected_count >= target_count:
+                break
+        return weighted_sum / max(1, selected_count)
 
     @classmethod
     def _anime_score(cls, image: Image.Image) -> float:
@@ -149,14 +186,46 @@ class DegradationAnalyzer:
         return sum(abs(a - b) for a, b in zip(left_values, right_values)) / len(left_values)
 
     @staticmethod
-    def _blockiness(image: Image.Image) -> float:
+    def _directional_activity_balance(image: Image.Image, *, threshold: int) -> float:
+        if image.width <= 1 or image.height <= 1:
+            return 0.0
+        horizontal = ImageChops.difference(
+            image.crop((1, 0, image.width, image.height)),
+            image.crop((0, 0, image.width - 1, image.height)),
+        )
+        vertical = ImageChops.difference(
+            image.crop((0, 1, image.width, image.height)),
+            image.crop((0, 0, image.width, image.height - 1)),
+        )
+        horizontal_histogram = horizontal.histogram()
+        vertical_histogram = vertical.histogram()
+        horizontal_ratio = sum(horizontal_histogram[threshold:]) / max(1, horizontal.width * horizontal.height)
+        vertical_ratio = sum(vertical_histogram[threshold:]) / max(1, vertical.width * vertical.height)
+        return min(horizontal_ratio, vertical_ratio) / max(horizontal_ratio, vertical_ratio, 1e-6)
+
+    @classmethod
+    def _blockiness(cls, image: Image.Image) -> float:
+        horizontal_score = cls._blockiness_axis(image, axis="horizontal")
+        vertical_score = cls._blockiness_axis(image, axis="vertical")
+        # JPEG blocks form a two-dimensional 8x8 grid. A strong edge pattern in
+        # only one direction is usually text, architecture, or line art.
+        return min(horizontal_score, vertical_score)
+
+    @staticmethod
+    def _blockiness_axis(image: Image.Image, *, axis: str) -> float:
         pixels = image.load()
         boundary = []
         interior = []
-        for y in range(image.height):
-            for x in range(1, image.width):
-                value = abs(pixels[x, y] - pixels[x - 1, y])
-                (boundary if x % 8 == 0 else interior).append(value)
+        if axis == "horizontal":
+            for y in range(image.height):
+                for x in range(1, image.width):
+                    value = abs(pixels[x, y] - pixels[x - 1, y])
+                    (boundary if x % 8 == 0 else interior).append(value)
+        else:
+            for y in range(1, image.height):
+                for x in range(image.width):
+                    value = abs(pixels[x, y] - pixels[x, y - 1])
+                    (boundary if y % 8 == 0 else interior).append(value)
         if not boundary:
             return 0.0
         boundary_mean = sum(boundary) / len(boundary)

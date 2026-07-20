@@ -7,6 +7,36 @@ from app.restoration.analyzer import DegradationAnalyzer
 from app.restoration.orchestrator import RestorationOrchestrator
 
 
+def _sparse_clear_portrait() -> Image.Image:
+    image = Image.new("RGB", (256, 256))
+    pixels = image.load()
+    for y in range(image.height):
+        for x in range(image.width):
+            luminance = int(205 + 14 * y / image.height)
+            pixels[x, y] = (luminance - 18, luminance - 5, min(255, luminance + 8))
+
+    for y in range(36, 175):
+        for x in range(78, 179):
+            normalized_x = (x - 128) / 50
+            normalized_y = (y - 105) / 69
+            if normalized_x**2 + normalized_y**2 <= 1:
+                shade = int(205 - 18 * (normalized_x**2 + normalized_y**2))
+                pixels[x, y] = (shade, shade - 50, shade - 80)
+    for x in range(70, 186):
+        image.putpixel((x, 65), (30, 28, 29))
+        image.putpixel((x, 66), (30, 28, 29))
+    for x in range(105, 122):
+        image.putpixel((x, 91), (55, 42, 39))
+    for x in range(139, 156):
+        image.putpixel((x, 91), (55, 42, 39))
+    for y in range(162, image.height):
+        left = max(0, 73 - (y - 162) // 2)
+        right = min(image.width, 183 + (y - 162) // 2)
+        for x in range(left, right):
+            pixels[x, y] = (195, 186, 176)
+    return image
+
+
 def test_degradation_analyzer_detects_flat_blurry_image():
     image = Image.new("RGB", (128, 128), (128, 128, 128))
 
@@ -80,6 +110,71 @@ def test_auto_mode_uses_analyzer_recommendation():
     plan = orchestrator.plan("auto", Image.new("RGB", (64, 64), "gray"))
 
     assert plan.mode == "balanced"
+
+
+def test_auto_mode_preserves_sparse_clear_portrait_without_denoising():
+    settings = Settings(_env_file=None, swinir_enabled=True)
+
+    plan = RestorationOrchestrator(settings).plan("auto", _sparse_clear_portrait())
+
+    assert plan.report.recommended_mode == "preserve"
+    assert plan.mode == "preserve"
+    assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
+    assert plan.use_swinir is False
+    assert plan.use_qwen_edit is False
+
+
+def test_auto_mode_routes_genuinely_blurred_portrait_without_unneeded_denoising():
+    settings = Settings(
+        _env_file=None,
+        swinir_enabled=True,
+        restoration_severe_blur_enabled=False,
+    )
+    blurry = _sparse_clear_portrait().filter(ImageFilter.GaussianBlur(3))
+
+    plan = RestorationOrchestrator(settings).plan("auto", blurry)
+
+    assert plan.report.recommended_mode == "balanced"
+    assert plan.mode == "balanced"
+    assert plan.realesrgan_model_name == settings.restoration_balanced_realesrgan_model_name
+    assert plan.use_swinir is False
+
+
+def test_auto_mode_enables_swinir_for_detected_noise():
+    settings = Settings(
+        _env_file=None,
+        swinir_enabled=True,
+        restoration_severe_blur_enabled=False,
+    )
+    noisy = Image.new("RGB", (128, 128))
+    pixels = noisy.load()
+    for y in range(noisy.height):
+        for x in range(noisy.width):
+            value = (x * 73 + y * 151 + x * y * 19) % 256
+            pixels[x, y] = (value, value, value)
+
+    plan = RestorationOrchestrator(settings).plan("auto", noisy)
+
+    assert plan.report.noise_score >= 0.45
+    assert plan.mode == "balanced"
+    assert plan.use_swinir is True
+
+
+def test_auto_mode_does_not_escalate_moderate_blur_to_generative_restoration():
+    settings = Settings(
+        _env_file=None,
+        swinir_enabled=True,
+        restoration_severe_blur_enabled=True,
+        restoration_severe_blur_threshold=0.82,
+    )
+    moderately_blurry = _sparse_clear_portrait().filter(ImageFilter.GaussianBlur(1.5))
+
+    plan = RestorationOrchestrator(settings).plan("auto", moderately_blurry)
+
+    assert plan.mode == "balanced"
+    assert plan.severe_blur is False
+    assert plan.use_qwen_edit is False
+    assert plan.use_supir is False
 
 
 def test_auto_mode_escalates_severe_photo_blur_to_qwen_hd_restoration():

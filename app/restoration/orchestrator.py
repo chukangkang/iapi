@@ -33,9 +33,14 @@ class RestorationOrchestrator:
         report = self.analyzer.analyze(image)
         mode = report.recommended_mode if requested_mode == "auto" else requested_mode
         logger.info(
-            "Restoration analysis: requested=%s recommended=%s anime_score=%.3f anime=%s threshold=%.3f",
+            "Restoration analysis: requested=%s recommended=%s blur=%.3f detail=%.3f noise=%.3f "
+            "blockiness=%.3f anime_score=%.3f anime=%s threshold=%.3f",
             requested_mode,
             report.recommended_mode,
+            report.blur_score,
+            report.detail_score,
+            report.noise_score,
+            report.blockiness_score,
             report.anime_score,
             report.is_anime,
             self.settings.restoration_anime_score_threshold,
@@ -59,6 +64,7 @@ class RestorationOrchestrator:
         severe_blur = (
             requested_mode == "auto"
             and self.settings.restoration_severe_blur_enabled
+            and report.recommended_mode == "balanced"
             and report.blur_score >= self.settings.restoration_severe_blur_threshold
         )
         if severe_blur:
@@ -98,6 +104,11 @@ class RestorationOrchestrator:
                 use_supir=False,
             )
         if mode == "balanced":
+            use_swinir = self.settings.swinir_enabled and (
+                requested_mode != "auto"
+                or report.noise_score >= 0.20
+                or report.blockiness_score >= 0.25
+            )
             return RestorationPlan(
                 mode=mode,
                 report=report,
@@ -105,7 +116,7 @@ class RestorationOrchestrator:
                 upscale_method="realesrgan",
                 realesrgan_model_name=self.settings.restoration_balanced_realesrgan_model_name,
                 face_restoration=self.settings.codeformer_enabled,
-                use_swinir=self.settings.swinir_enabled,
+                use_swinir=use_swinir,
                 use_supir=False,
             )
         return RestorationPlan(
