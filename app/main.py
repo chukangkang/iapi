@@ -625,6 +625,9 @@ async def _run_image_request(
         metadata["restoration_supir_requested"] = plan.use_supir
         metadata["restoration_severe_blur"] = plan.severe_blur
         metadata["restoration_qwen_unblur_lora_requested"] = plan.use_qwen_unblur_lora
+        metadata["restoration_is_illustration"] = plan.is_illustration
+        metadata["restoration_illustration_score"] = plan.illustration_score
+        metadata["restoration_style_label"] = plan.style_label
 
         source = primary_reference_image
         if plan.use_swinir:

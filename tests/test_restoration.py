@@ -1,10 +1,17 @@
 import math
 
+import pytest
 from PIL import Image, ImageFilter
 
 from app.config import Settings
 from app.restoration.analyzer import DegradationAnalyzer
 from app.restoration.orchestrator import RestorationOrchestrator
+from app.restoration.style_classifier import IllustrationClassification, IllustrationStyleClassifier
+
+
+@pytest.fixture(autouse=True)
+def _disable_style_classifier_by_default(monkeypatch):
+    monkeypatch.setenv("RESTORATION_STYLE_CLASSIFIER_ENABLED", "false")
 
 
 def _sparse_clear_portrait() -> Image.Image:
@@ -249,6 +256,50 @@ def test_auto_mode_routes_anime_image_to_anime_realesrgan():
     assert plan.face_restoration is False
 
 
+def test_auto_mode_routes_semantic_game_illustration_to_anime_realesrgan():
+    settings = Settings(
+        _env_file=None,
+        restoration_anime_detection_enabled=True,
+        restoration_style_classifier_enabled=True,
+        restoration_style_classifier_threshold=0.72,
+    )
+    image = Image.new("RGB", (512, 256), (196, 188, 168))
+    classifier = FakeStyleClassifier(
+        IllustrationClassification(
+            illustration_score=0.96,
+            photo_score=0.04,
+            label="illustrated promotional poster",
+        )
+    )
+
+    plan = RestorationOrchestrator(settings, style_classifier=classifier).plan("auto", image)
+
+    assert classifier.images == [image]
+    assert plan.report.is_anime is False
+    assert plan.is_illustration is True
+    assert plan.illustration_score == pytest.approx(0.96)
+    assert plan.realesrgan_model_name == settings.restoration_anime_realesrgan_model_name
+    assert plan.use_swinir is False
+    assert plan.face_restoration is False
+
+
+def test_auto_mode_keeps_photo_route_when_semantic_style_classifier_fails():
+    settings = Settings(
+        _env_file=None,
+        restoration_anime_detection_enabled=True,
+        restoration_style_classifier_enabled=True,
+    )
+    classifier = FakeStyleClassifier(error=RuntimeError("classifier unavailable"))
+
+    plan = RestorationOrchestrator(settings, style_classifier=classifier).plan(
+        "auto",
+        _sparse_clear_portrait(),
+    )
+
+    assert plan.is_illustration is False
+    assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
+
+
 def test_auto_mode_does_not_route_continuous_tone_photo_to_anime_model():
     settings = Settings(
         _env_file=None,
@@ -279,7 +330,47 @@ def test_auto_mode_does_not_route_continuous_tone_photo_to_anime_model():
 
     assert plan.report.is_anime is False
     assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
-    assert plan.face_restoration is False
+
+
+def test_style_classifier_combines_digital_art_and_illustrated_poster_scores():
+    classifier = IllustrationStyleClassifier(
+        Settings(_env_file=None, restoration_style_classifier_enabled=True)
+    )
+    classifier._classifier = FakeZeroShotPipeline(
+        [
+            {"label": IllustrationStyleClassifier.PHOTO_LABEL, "score": 0.10},
+            {"label": IllustrationStyleClassifier.DIGITAL_ART_LABEL, "score": 0.35},
+            {"label": IllustrationStyleClassifier.ILLUSTRATED_POSTER_LABEL, "score": 0.55},
+        ]
+    )
+
+    result = classifier.classify(Image.new("RGB", (64, 64), "gray"))
+
+    assert result.photo_score == pytest.approx(0.10)
+    assert result.illustration_score == pytest.approx(0.90)
+    assert result.label == IllustrationStyleClassifier.ILLUSTRATED_POSTER_LABEL
+
+
+class FakeStyleClassifier:
+    def __init__(self, result=None, *, error=None):
+        self.result = result
+        self.error = error
+        self.images = []
+
+    def classify(self, image):
+        self.images.append(image)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class FakeZeroShotPipeline:
+    def __init__(self, result):
+        self.result = result
+
+    def __call__(self, _image, *, candidate_labels):
+        assert candidate_labels == list(IllustrationStyleClassifier.CANDIDATE_LABELS)
+        return self.result
 
 
 def test_explicit_preserve_mode_does_not_force_anime_model():

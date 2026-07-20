@@ -220,7 +220,7 @@ SUPIR_ENDPOINT=/v1/restore
 | `creative` | 可使用 Qwen Edit 和独立 SUPIR |
 | `auto` | 根据模糊、噪声、块效应和细节选择 preserve/balanced |
 
-`auto` 还会根据颜色量化误差、强边缘比例和饱和度估算动漫/插画风格。命中后使用 `RealESRGAN_x4plus_anime_6B`，并跳过面向照片的 SwinIR 与 CodeFormer/ArcFace 人脸链路，避免动漫五官被照片模型重建。
+`auto` 先根据颜色、平涂区域和线稿边缘估算动漫风格，再使用 CPU CLIP 语义分类补充识别半写实游戏数字绘画和插画宣传海报。任一路径命中后使用 `RealESRGAN_x4plus_anime_6B`，并跳过面向照片的 SwinIR 与 CodeFormer/ArcFace 人脸链路。CLIP 首次使用会下载权重；分类器不可用时保守回退到像素分析结果。
 
 非动漫图片如果 `blur_score` 达到 `RESTORATION_SEVERE_BLUR_THRESHOLD`，传统降噪/超分已无法恢复丢失结构，`auto` 会升级为生成式高清修复：独立 SUPIR 可用时优先 SUPIR，否则使用 Qwen Edit，最后再由照片 Real-ESRGAN 输出目标尺寸。生成式修复会推测缺失细节，无法保证与真实原貌完全一致。
 
@@ -246,6 +246,9 @@ FACE_CANDIDATE_DETECTION_WEIGHT=0.05
 RESTORATION_ANIME_DETECTION_ENABLED=true
 RESTORATION_ANIME_SCORE_THRESHOLD=0.72
 RESTORATION_ANIME_REALESRGAN_MODEL_NAME=RealESRGAN_x4plus_anime_6B
+RESTORATION_STYLE_CLASSIFIER_ENABLED=true
+RESTORATION_STYLE_CLASSIFIER_MODEL_PATH=openai/clip-vit-base-patch32
+RESTORATION_STYLE_CLASSIFIER_THRESHOLD=0.72
 RESTORATION_SEVERE_BLUR_ENABLED=true
 RESTORATION_SEVERE_BLUR_THRESHOLD=0.82
 RESTORATION_SEVERE_BLUR_PREFER_SUPIR=true

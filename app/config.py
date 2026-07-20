@@ -120,6 +120,9 @@ class Settings(BaseSettings):
     restoration_anime_detection_enabled: bool = True
     restoration_anime_score_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
     restoration_anime_realesrgan_model_name: str = "RealESRGAN_x4plus_anime_6B"
+    restoration_style_classifier_enabled: bool = True
+    restoration_style_classifier_model_path: str = "openai/clip-vit-base-patch32"
+    restoration_style_classifier_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
     restoration_severe_blur_enabled: bool = True
     restoration_severe_blur_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
     restoration_severe_blur_prefer_supir: bool = True

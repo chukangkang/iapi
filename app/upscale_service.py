@@ -254,7 +254,7 @@ class ImageUpscaleService:
         try:
             import torch
             first_param = next(model.parameters())
-        except (ImportError, StopIteration):
+        except (AttributeError, ImportError, StopIteration):
             return
         if first_param.device.type != "meta":
             return
