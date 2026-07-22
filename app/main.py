@@ -19,7 +19,7 @@ from app.config import Settings, get_settings
 from app.image_utils import image_to_base64_png, string_list_to_images, string_to_image, upload_file_to_image
 from app.storage import ImageStorage
 from app.tasks import ImageTask, ImageTaskManager
-from app.restoration import RestorationOrchestrator
+from app.restoration import RestorationDetailBlender, RestorationOrchestrator
 from app.restoration.codeformer_service import CodeFormerService
 from app.restoration.candidate_selector import FaceCandidateSelector
 from app.restoration.face_compositor import FaceSoftMaskCompositor
@@ -627,12 +627,14 @@ async def _run_image_request(
         metadata["restoration_qwen_unblur_lora_requested"] = plan.use_qwen_unblur_lora
         metadata["restoration_is_illustration"] = plan.is_illustration
         metadata["restoration_illustration_score"] = plan.illustration_score
+        metadata["restoration_photo_score"] = plan.photo_score
         metadata["restoration_style_label"] = plan.style_label
 
         source = primary_reference_image
         if plan.use_swinir:
             source = await _get_swinir_service(app_settings).restore(source, report=plan.report)
         if plan.use_qwen_edit:
+            generative_reference = source
             generation_width, generation_height = _resolve_qwen_edit_dimensions(output_width, output_height, app_settings)
             severe_lora_path, severe_lora_weight_name = _resolve_qwen_unblur_lora(
                 plan.use_qwen_unblur_lora,
@@ -665,16 +667,21 @@ async def _run_image_request(
             )
             if plan.severe_blur:
                 source = _get_qwen_edit_service().align_to_reference(source, primary_reference_image)
-                metadata["restoration_generative_backend"] = "qwen_edit"
+            source = RestorationDetailBlender(app_settings).blend(generative_reference, source)
+            metadata["restoration_generative_backend"] = "qwen_edit"
+            metadata["restoration_generative_blend_strength"] = app_settings.restoration_generative_blend_strength
         if plan.use_supir:
+            generative_reference = source
             source = await _get_supir_client(app_settings).restore(
                 source,
                 prompt=app_settings.restoration_severe_blur_prompt if plan.severe_blur else prompt or "Restore this photograph naturally while preserving identity and composition.",
                 width=output_width,
                 height=output_height,
             )
-            if plan.severe_blur:
+            if source is not generative_reference:
+                source = RestorationDetailBlender(app_settings).blend(generative_reference, source)
                 metadata["restoration_generative_backend"] = "supir"
+                metadata["restoration_generative_blend_strength"] = app_settings.restoration_generative_blend_strength
         image = await _get_upscale_service().upscale(
             source,
             width=output_width,

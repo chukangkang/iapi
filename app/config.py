@@ -58,10 +58,10 @@ class Settings(BaseSettings):
     qwen_image_turbo_scheduler_use_dynamic_shifting: bool = True
     qwen_image_turbo_scheduler_shift_terminal: float = 0.7155
     qwen_edit_model_path: str = "Qwen/Qwen-Image-Edit-2511"
-    qwen_edit_pipeline_class: str = "DiffusionPipeline"
-    qwen_edit_steps: int = Field(default=4, ge=1)
+    qwen_edit_pipeline_class: str = "QwenImageEditPlusPipeline"
+    qwen_edit_steps: int = Field(default=40, ge=1)
     qwen_edit_guidance_scale: float = Field(default=1.0, ge=0.0)
-    qwen_edit_true_cfg_scale: float = Field(default=1.0, ge=0.0)
+    qwen_edit_true_cfg_scale: float = Field(default=4.0, ge=0.0)
     qwen_edit_strength: float = Field(default=0.7, ge=0.0, le=1.0)
     qwen_edit_scale_to_side: Literal["longest", "shortest"] = "longest"
     qwen_edit_scale_to_length: int = Field(default=2048, ge=0)
@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     qwen_edit_device_map: Literal["none", "balanced", "cuda", "cpu"] = "none"
     qwen_edit_multi_gpu_enabled: bool = True
     qwen_edit_transformer_sharding_enabled: bool = True
-    qwen_edit_lightning_lora_enabled: bool = True
+    qwen_edit_lightning_lora_enabled: bool = False
     qwen_edit_lightning_lora_path: str = "lightx2v/Qwen-Image-Edit-2511-Lightning"
     qwen_edit_lightning_lora_weight_name: str = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-fp32.safetensors"
     qwen_edit_lightning_lora_scale: float = Field(default=1.0, ge=0.0)
@@ -128,24 +128,28 @@ class Settings(BaseSettings):
     restoration_severe_blur_prefer_supir: bool = True
     restoration_severe_blur_use_qwen_edit: bool = True
     restoration_severe_blur_qwen_strength: float = Field(default=0.45, ge=0.0, le=1.0)
+    restoration_generative_blend_enabled: bool = True
+    restoration_generative_blend_strength: float = Field(default=0.72, ge=0.0, le=1.0)
+    restoration_generative_blend_low_frequency_radius: float = Field(default=12.0, ge=0.0)
+    restoration_generative_blend_skin_strength: float = Field(default=0.52, ge=0.0, le=1.0)
     restoration_severe_blur_prompt: str = (
         "Restore this severely blurred photograph naturally. Recover only plausible high-frequency details, "
         "clear edges, and natural texture. Strictly preserve subject identity, facial geometry, expression, "
         "colors, pose, composition, text, logos, background, and object positions. Avoid plastic skin, "
         "over-smoothing, halos, invented objects, and identity changes."
     )
-    swinir_enabled: bool = False
+    swinir_enabled: bool = True
     swinir_model_path: str = ""
     swinir_auto_download: bool = True
     swinir_tile: int = Field(default=512, ge=0)
     swinir_tile_overlap: int = Field(default=32, ge=0)
     swinir_fp32: bool = True
     swinir_gpu_id: Optional[int] = None
-    codeformer_enabled: bool = False
+    codeformer_enabled: bool = True
     codeformer_model_path: str = "weights/CodeFormer/codeformer.pth"
     codeformer_auto_download: bool = True
     codeformer_fidelity_weight: float = Field(default=0.7, ge=0.0, le=1.0)
-    insightface_enabled: bool = False
+    insightface_enabled: bool = True
     insightface_model_name: str = "buffalo_l"
     insightface_model_root: str = "weights/insightface"
     insightface_identity_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
@@ -153,7 +157,13 @@ class Settings(BaseSettings):
     landmark_deformation_max_threshold: float = Field(default=0.16, ge=0.0, le=1.0)
     face_mask_inset_ratio: float = Field(default=0.12, ge=0.0, le=0.45)
     face_mask_blur_ratio: float = Field(default=0.08, ge=0.0, le=0.25)
-    face_mask_opacity: float = Field(default=0.9, ge=0.0, le=1.0)
+    face_mask_opacity: float = Field(default=0.72, ge=0.0, le=1.0)
+    face_color_match_enabled: bool = True
+    face_color_match_strength: float = Field(default=0.75, ge=0.0, le=1.0)
+    face_texture_blend: float = Field(default=0.35, ge=0.0, le=1.0)
+    face_candidate_detail_gain_min: float = Field(default=0.015, ge=0.0, le=1.0)
+    face_candidate_detail_gain_max: float = Field(default=0.95, ge=0.0, le=1.0)
+    face_candidate_color_shift_max: float = Field(default=0.14, ge=0.0, le=1.0)
     face_candidate_min_score: float = Field(default=0.72, ge=0.0, le=1.0)
     face_candidate_identity_weight: float = Field(default=0.50, ge=0.0)
     face_candidate_geometry_weight: float = Field(default=0.30, ge=0.0)

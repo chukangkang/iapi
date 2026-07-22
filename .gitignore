@@ -10,4 +10,7 @@ outputs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
+/weights/
+/core
+/gfpgan/
+/ComfyUI/

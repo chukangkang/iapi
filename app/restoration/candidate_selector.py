@@ -1,7 +1,7 @@
 import logging
 from dataclasses import replace
 
-from PIL import Image, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 from app.config import Settings
 from app.restoration.codeformer_service import FaceCandidate, FaceCandidateResult
@@ -28,6 +28,8 @@ class FaceCandidateSelector:
         selected_candidates = []
         for candidate in result.candidates:
             hard_rejection = self._hard_rejection_reason(candidate)
+            if hard_rejection is None:
+                hard_rejection = self._naturalness_rejection_reason(candidate)
             if hard_rejection is not None:
                 selected_candidates.append(
                     replace(
@@ -76,6 +78,37 @@ class FaceCandidateSelector:
         if not candidate.landmark_accepted:
             return "landmarks"
         return None
+
+    def _naturalness_rejection_reason(self, candidate: FaceCandidate) -> str | None:
+        original_detail = detail_score(candidate.original_face)
+        restored_detail = detail_score(candidate.restored_face)
+        detail_gain = restored_detail - original_detail
+        if detail_gain < self.settings.face_candidate_detail_gain_min:
+            return "no_detail_gain"
+        if detail_gain > self.settings.face_candidate_detail_gain_max:
+            return "over_sharpened"
+        if self._color_shift(candidate) > self.settings.face_candidate_color_shift_max:
+            return "color_shift"
+        return None
+
+    @staticmethod
+    def _color_shift(candidate: FaceCandidate) -> float:
+        original = candidate.original_face.convert("RGB")
+        restored = candidate.restored_face.convert("RGB").resize(original.size, Image.Resampling.BILINEAR)
+        # Compare low-frequency color/tone rather than legitimate pores and edges.
+        radius = max(1.0, min(original.size) / 32.0)
+        width, height = original.size
+        sample_box = (
+            max(0, round(width * 0.18)),
+            max(0, round(height * 0.16)),
+            min(width, round(width * 0.82)),
+            min(height, round(height * 0.84)),
+        )
+        difference = ImageChops.difference(
+            original.filter(ImageFilter.GaussianBlur(radius=radius)),
+            restored.filter(ImageFilter.GaussianBlur(radius=radius)),
+        ).crop(sample_box)
+        return sum(ImageStat.Stat(difference).mean) / (3.0 * 255.0)
 
     def _quality_score(self, candidate: FaceCandidate) -> float:
         original_detail = detail_score(candidate.original_face)

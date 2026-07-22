@@ -222,9 +222,9 @@ SUPIR_ENDPOINT=/v1/restore
 
 `auto` 先根据颜色、平涂区域和线稿边缘估算动漫风格，再使用 CPU CLIP 语义分类补充识别半写实游戏数字绘画和插画宣传海报。任一路径命中后使用 `RealESRGAN_x4plus_anime_6B`，并跳过面向照片的 SwinIR 与 CodeFormer/ArcFace 人脸链路。CLIP 首次使用会下载权重；分类器不可用时保守回退到像素分析结果。
 
-非动漫图片如果 `blur_score` 达到 `RESTORATION_SEVERE_BLUR_THRESHOLD`，传统降噪/超分已无法恢复丢失结构，`auto` 会升级为生成式高清修复：独立 SUPIR 可用时优先 SUPIR，否则使用 Qwen Edit，最后再由照片 Real-ESRGAN 输出目标尺寸。生成式修复会推测缺失细节，无法保证与真实原貌完全一致。
+非动漫图片如果 `blur_score` 达到 `RESTORATION_SEVERE_BLUR_THRESHOLD`，传统降噪/超分已无法恢复丢失结构，`auto` 会升级为生成式高清修复：独立 SUPIR 可用时优先 SUPIR，否则使用 Qwen Edit，最后再由照片 Real-ESRGAN 输出目标尺寸。生成结果会先经过低频保真融合：保留原图的色调、大轮廓与面部低频结构，只按配置引入恢复出的高频细节，从而降低凭空补物、身份漂移与塑料皮肤。生成式修复仍会推测缺失细节，无法保证与真实原貌完全一致。
 
-人脸候选顺序：CodeFormer → ArcFace → 五点关键点形变过滤 → 综合评分 → 软遮罩贴回。任何候选不安全都会自动回退原始人脸。
+人脸候选顺序：CodeFormer → ArcFace → 五点关键点形变过滤 → 细节增益/过锐/色偏门控 → 综合评分 → 肤色匹配与原始纹理混合 → 软遮罩贴回。任何候选不安全都会自动回退原始人脸。质量优先配置默认启用 CodeFormer 与 InsightFace；若 Worker 未安装对应运行时，可显式关闭。
 
 重要配置：
 
@@ -254,7 +254,22 @@ RESTORATION_SEVERE_BLUR_THRESHOLD=0.82
 RESTORATION_SEVERE_BLUR_PREFER_SUPIR=true
 RESTORATION_SEVERE_BLUR_USE_QWEN_EDIT=true
 RESTORATION_SEVERE_BLUR_QWEN_STRENGTH=0.45
+RESTORATION_GENERATIVE_BLEND_ENABLED=true
+RESTORATION_GENERATIVE_BLEND_STRENGTH=0.72
+RESTORATION_GENERATIVE_BLEND_LOW_FREQUENCY_RADIUS=12
+RESTORATION_GENERATIVE_BLEND_SKIN_STRENGTH=0.52
+CODEFORMER_ENABLED=true
+INSIGHTFACE_ENABLED=true
+FACE_MASK_OPACITY=0.72
+FACE_COLOR_MATCH_ENABLED=true
+FACE_COLOR_MATCH_STRENGTH=0.75
+FACE_TEXTURE_BLEND=0.35
+FACE_CANDIDATE_DETAIL_GAIN_MIN=0.015
+FACE_CANDIDATE_DETAIL_GAIN_MAX=0.95
+FACE_CANDIDATE_COLOR_SHIFT_MAX=0.14
 ```
+
+普通 `qwen_edit` 默认采用官方质量路径：40 步、`true_cfg_scale=4.0`，不启用 4 步 Lightning 蒸馏 LoRA。只有吞吐优先时才建议开启 `QWEN_EDIT_LIGHTNING_LORA_ENABLED=true`，并同步改为 4 步、`true_cfg_scale=1.0`。不同 Edit 路径切换时服务会卸载上一条路径的 LoRA，避免 Unblur 适配器污染普通编辑任务。
 
 ## 8. 独立 SUPIR Worker
 

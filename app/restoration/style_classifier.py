@@ -20,14 +20,15 @@ class IllustrationClassification:
 class IllustrationStyleClassifier:
     """Lazy CLIP classifier for photographic versus illustrated image content."""
 
-    PHOTO_LABEL = "a real camera photograph"
-    DIGITAL_ART_LABEL = "a digital painting, anime, cartoon, or video game artwork"
-    ILLUSTRATED_POSTER_LABEL = "an illustrated promotional poster or graphic design advertisement"
-    CANDIDATE_LABELS = (
-        PHOTO_LABEL,
-        DIGITAL_ART_LABEL,
-        ILLUSTRATED_POSTER_LABEL,
-    )
+    # Keep the two labels short, symmetric, and mutually exclusive. The old
+    # four-label prompt compared detailed photography subtypes with a single
+    # label containing many popular art concepts. CLIP strongly preferred that
+    # label for soft studio portraits, routing real photos to the anime model.
+    PHOTO_LABEL = "a real photograph"
+    ILLUSTRATION_LABEL = "a non-photographic illustration or render"
+    PHOTO_LABELS = (PHOTO_LABEL,)
+    ILLUSTRATION_LABELS = (ILLUSTRATION_LABEL,)
+    CANDIDATE_LABELS = (PHOTO_LABEL, ILLUSTRATION_LABEL)
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -38,19 +39,18 @@ class IllustrationStyleClassifier:
         predictions = classifier(
             image.convert("RGB"),
             candidate_labels=list(self.CANDIDATE_LABELS),
+            hypothesis_template="{}",
         )
         scores = {
             str(prediction["label"]): float(prediction["score"])
             for prediction in predictions
         }
-        illustration_score = sum(
-            scores.get(label, 0.0)
-            for label in (self.DIGITAL_ART_LABEL, self.ILLUSTRATED_POSTER_LABEL)
-        )
+        photo_score = sum(scores.get(label, 0.0) for label in self.PHOTO_LABELS)
+        illustration_score = sum(scores.get(label, 0.0) for label in self.ILLUSTRATION_LABELS)
         label = max(scores, key=scores.get) if scores else "unknown"
         return IllustrationClassification(
             illustration_score=max(0.0, min(1.0, illustration_score)),
-            photo_score=max(0.0, min(1.0, scores.get(self.PHOTO_LABEL, 0.0))),
+            photo_score=max(0.0, min(1.0, photo_score)),
             label=label,
         )
 

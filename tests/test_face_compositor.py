@@ -52,6 +52,8 @@ def test_compositor_uses_soft_mask_with_opaque_center_and_preserved_corners():
         face_mask_inset_ratio=0.12,
         face_mask_blur_ratio=0.08,
         face_mask_opacity=1.0,
+        face_color_match_enabled=False,
+        face_texture_blend=0.0,
     )
 
     composed = FaceSoftMaskCompositor(settings).composite(
@@ -71,7 +73,12 @@ def test_compositor_respects_source_to_aligned_affine_matrix():
     candidate = _candidate(affine_matrix=((1.0, 0.0, -64.0), (0.0, 1.0, 0.0)))
 
     composed = FaceSoftMaskCompositor(
-        Settings(_env_file=None, face_mask_opacity=1.0)
+        Settings(
+            _env_file=None,
+            face_mask_opacity=1.0,
+            face_color_match_enabled=False,
+            face_texture_blend=0.0,
+        )
     ).composite(FaceCandidateResult(source, (candidate,), 1))
 
     assert composed.image.getpixel((96, 32))[0] > 245
@@ -88,3 +95,25 @@ def test_compositor_skips_invalid_affine_but_pastes_other_faces():
     )
 
     assert composed.pasted_face_count == 1
+
+
+def test_compositor_matches_face_tone_and_retains_source_texture():
+    original = Image.new("RGB", (64, 64), (165, 112, 88))
+    for x in range(8, 56, 4):
+        original.putpixel((x, 32), (115, 75, 60))
+    candidate = replace(
+        _candidate(),
+        original_face=original,
+        restored_face=Image.new("RGB", (64, 64), (235, 205, 190)),
+    )
+    settings = Settings(
+        _env_file=None,
+        face_color_match_enabled=True,
+        face_color_match_strength=1.0,
+        face_texture_blend=0.35,
+    )
+
+    prepared = FaceSoftMaskCompositor(settings)._prepare_restored_face(candidate)
+
+    assert prepared.getpixel((32, 32))[0] < 220
+    assert prepared.getpixel((8, 32)) != prepared.getpixel((9, 32))

@@ -332,23 +332,99 @@ def test_auto_mode_does_not_route_continuous_tone_photo_to_anime_model():
     assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
 
 
-def test_style_classifier_combines_digital_art_and_illustrated_poster_scores():
+def test_style_classifier_balances_photo_and_illustration_scores():
     classifier = IllustrationStyleClassifier(
         Settings(_env_file=None, restoration_style_classifier_enabled=True)
     )
     classifier._classifier = FakeZeroShotPipeline(
         [
-            {"label": IllustrationStyleClassifier.PHOTO_LABEL, "score": 0.10},
-            {"label": IllustrationStyleClassifier.DIGITAL_ART_LABEL, "score": 0.35},
-            {"label": IllustrationStyleClassifier.ILLUSTRATED_POSTER_LABEL, "score": 0.55},
+            {"label": IllustrationStyleClassifier.PHOTO_LABEL, "score": 0.20},
+            {"label": IllustrationStyleClassifier.ILLUSTRATION_LABEL, "score": 0.80},
         ]
     )
 
     result = classifier.classify(Image.new("RGB", (64, 64), "gray"))
 
-    assert result.photo_score == pytest.approx(0.10)
-    assert result.illustration_score == pytest.approx(0.90)
-    assert result.label == IllustrationStyleClassifier.ILLUSTRATED_POSTER_LABEL
+    assert result.photo_score == pytest.approx(0.20)
+    assert result.illustration_score == pytest.approx(0.80)
+    assert result.label == IllustrationStyleClassifier.ILLUSTRATION_LABEL
+
+
+def test_style_classifier_counts_photographic_advertising_as_photo():
+    classifier = IllustrationStyleClassifier(
+        Settings(_env_file=None, restoration_style_classifier_enabled=True)
+    )
+    classifier._classifier = FakeZeroShotPipeline(
+        [
+            {"label": IllustrationStyleClassifier.PHOTO_LABEL, "score": 0.86},
+            {"label": IllustrationStyleClassifier.ILLUSTRATION_LABEL, "score": 0.14},
+        ]
+    )
+
+    result = classifier.classify(Image.new("RGB", (64, 64), "gray"))
+
+    assert result.photo_score == pytest.approx(0.86)
+    assert result.illustration_score == pytest.approx(0.14)
+    assert result.label == IllustrationStyleClassifier.PHOTO_LABEL
+
+
+def test_auto_mode_prioritizes_severe_photo_blur_after_photo_classification():
+    settings = Settings(
+        _env_file=None,
+        restoration_anime_detection_enabled=True,
+        restoration_style_classifier_enabled=True,
+        restoration_style_classifier_threshold=0.72,
+        restoration_severe_blur_enabled=True,
+        restoration_severe_blur_threshold=0.80,
+        restoration_severe_blur_use_qwen_edit=True,
+        supir_enabled=False,
+    )
+    classifier = FakeStyleClassifier(
+        IllustrationClassification(
+            illustration_score=0.03,
+            photo_score=0.97,
+            label=IllustrationStyleClassifier.PHOTO_LABEL,
+        )
+    )
+
+    plan = RestorationOrchestrator(settings, style_classifier=classifier).plan(
+        "auto",
+        Image.new("RGB", (96, 96), "gray"),
+    )
+
+    assert plan.is_illustration is False
+    assert plan.severe_blur is True
+    assert plan.use_qwen_edit is True
+    assert plan.use_qwen_unblur_lora is settings.qwen_unblur_upscale_lora_enabled
+    assert plan.realesrgan_model_name == settings.restoration_creative_realesrgan_model_name
+
+
+def test_auto_mode_keeps_photographic_advertisement_on_photo_model():
+    settings = Settings(
+        _env_file=None,
+        restoration_anime_detection_enabled=True,
+        restoration_style_classifier_enabled=True,
+        restoration_style_classifier_threshold=0.72,
+    )
+    classifier = FakeStyleClassifier(
+        IllustrationClassification(
+            illustration_score=0.14,
+            photo_score=0.86,
+            label=IllustrationStyleClassifier.PHOTO_LABEL,
+        )
+    )
+
+    plan = RestorationOrchestrator(settings, style_classifier=classifier).plan(
+        "auto",
+        _sparse_clear_portrait(),
+    )
+
+    assert plan.is_illustration is False
+    assert plan.photo_score == pytest.approx(0.86)
+    assert plan.illustration_score == pytest.approx(0.14)
+    assert plan.style_label == IllustrationStyleClassifier.PHOTO_LABEL
+    assert plan.realesrgan_model_name == settings.restoration_preserve_realesrgan_model_name
+    assert plan.use_qwen_edit is False
 
 
 class FakeStyleClassifier:
@@ -368,8 +444,9 @@ class FakeZeroShotPipeline:
     def __init__(self, result):
         self.result = result
 
-    def __call__(self, _image, *, candidate_labels):
+    def __call__(self, _image, *, candidate_labels, hypothesis_template):
         assert candidate_labels == list(IllustrationStyleClassifier.CANDIDATE_LABELS)
+        assert hypothesis_template == "{}"
         return self.result
 
 

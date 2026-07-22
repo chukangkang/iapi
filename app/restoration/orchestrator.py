@@ -25,6 +25,7 @@ class RestorationPlan:
     use_qwen_unblur_lora: bool = False
     is_illustration: bool = False
     illustration_score: float = 0.0
+    photo_score: float = 0.0
     style_label: str = "not_checked"
 
 
@@ -54,6 +55,7 @@ class RestorationOrchestrator:
             raise ValueError(f"Unsupported restoration mode: {mode}")
 
         illustration_score = 0.0
+        photo_score = 0.0
         style_label = "pixel_anime" if report.is_anime else "not_checked"
         semantic_illustration = False
         should_classify_style = (
@@ -66,6 +68,7 @@ class RestorationOrchestrator:
             try:
                 classification = self.style_classifier.classify(image)
                 illustration_score = classification.illustration_score
+                photo_score = classification.photo_score
                 style_label = classification.label
                 semantic_illustration = (
                     illustration_score >= self.settings.restoration_style_classifier_threshold
@@ -101,6 +104,7 @@ class RestorationOrchestrator:
                 use_supir=False,
                 is_illustration=True,
                 illustration_score=illustration_score,
+                photo_score=photo_score,
                 style_label=style_label,
             )
 
@@ -133,6 +137,9 @@ class RestorationOrchestrator:
                     use_supir=use_supir,
                     severe_blur=True,
                     use_qwen_unblur_lora=use_qwen_edit and self.settings.qwen_unblur_upscale_lora_enabled,
+                    illustration_score=illustration_score,
+                    photo_score=photo_score,
+                    style_label=style_label,
                 )
 
         if mode == "preserve":
@@ -145,6 +152,9 @@ class RestorationOrchestrator:
                 face_restoration=False,
                 use_swinir=False,
                 use_supir=False,
+                illustration_score=illustration_score,
+                photo_score=photo_score,
+                style_label=style_label,
             )
         if mode == "balanced":
             use_swinir = self.settings.swinir_enabled and (
@@ -161,6 +171,9 @@ class RestorationOrchestrator:
                 face_restoration=self.settings.codeformer_enabled,
                 use_swinir=use_swinir,
                 use_supir=False,
+                illustration_score=illustration_score,
+                photo_score=photo_score,
+                style_label=style_label,
             )
         return RestorationPlan(
             mode=mode,
@@ -171,4 +184,7 @@ class RestorationOrchestrator:
             face_restoration=self.settings.codeformer_enabled,
             use_swinir=False,
             use_supir=self.settings.supir_enabled and bool(self.settings.supir_base_url.strip()),
+            illustration_score=illustration_score,
+            photo_score=photo_score,
+            style_label=style_label,
         )

@@ -1,4 +1,5 @@
 import pytest
+import diffusers
 from fastapi import HTTPException
 from PIL import Image
 from pydantic import ValidationError
@@ -7,6 +8,7 @@ from app.image_utils import image_to_base64_png, string_list_to_images, string_t
 from app.main import ImageGenerationRequest, _apply_prompt_params, _payload_image_to_reference, _resolve_dimensions, _resolve_enhance_mode, _resolve_face_enhance, _resolve_negative_prompt, _resolve_qwen_edit_dimensions, _resolve_qwen_unblur_lora, _validate_image_payload
 from app.config import Settings
 from app.qwen_edit_service import QwenImageEditService
+from app.qwen_image_service import ModelManager
 from app.upscale_service import ImageUpscaleService
 
 
@@ -94,15 +96,18 @@ def test_qwen_image_2512_uses_official_defaults():
     )
 
 
-def test_qwen_unblur_defaults_match_low_distortion_lightning_workflow():
+def test_qwen_edit_defaults_prioritize_official_high_quality_workflow():
     settings = Settings(_env_file=None)
 
-    assert settings.qwen_edit_steps == 4
+    assert settings.qwen_edit_steps == 40
     assert settings.qwen_edit_guidance_scale == 1.0
-    assert settings.qwen_edit_true_cfg_scale == 1.0
+    assert settings.qwen_edit_true_cfg_scale == 4.0
     assert settings.qwen_edit_scale_to_length == 2048
     assert settings.qwen_edit_input_fit_mode == "cover"
-    assert settings.qwen_edit_lightning_lora_enabled is True
+    assert settings.qwen_edit_lightning_lora_enabled is False
+    assert settings.swinir_enabled is True
+    assert settings.codeformer_enabled is True
+    assert settings.insightface_enabled is True
     assert settings.qwen_edit_lightning_lora_scale == 1.0
     assert settings.qwen_edit_scheduler_base_shift == pytest.approx(1.0986122886681098)
     assert settings.qwen_unblur_upscale_trigger_prompt == (
@@ -138,7 +143,7 @@ def test_qwen_edit_applies_lightning_lora_and_scheduler():
         def set_adapters(self, names, adapter_weights):
             self.adapters = (names, adapter_weights)
 
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None, qwen_edit_lightning_lora_enabled=True)
     service = QwenImageEditService(settings)
     pipe = FakePipeline()
 
@@ -172,6 +177,192 @@ def test_qwen_edit_does_not_replace_scheduler_when_lightning_is_disabled():
     service._configure_edit_pipeline(pipe)
 
     assert pipe.scheduler is original_scheduler
+
+
+def test_qwen_edit_restores_base_scheduler_after_lightning_is_disabled():
+    class FakeScheduler:
+        def __init__(self, config=None):
+            self.config = config or {"base": True}
+
+        @classmethod
+        def from_config(cls, config, **kwargs):
+            return cls({**dict(config), **kwargs})
+
+    class FakePipeline:
+        def __init__(self):
+            self.scheduler = FakeScheduler()
+
+    settings = Settings(_env_file=None, qwen_edit_lightning_lora_enabled=True)
+    service = QwenImageEditService(settings)
+    pipe = FakePipeline()
+    service._apply_edit_scheduler(pipe)
+
+    service.settings.qwen_edit_lightning_lora_enabled = False
+    service._configure_edit_pipeline(pipe)
+
+    assert pipe.scheduler.config == {"base": True}
+    assert service._lightning_scheduler_active is False
+
+
+def test_qwen_edit_reloads_adapters_when_switching_from_unblur_to_plain_edit():
+    class FakePipeline:
+        def __init__(self):
+            self.loaded = []
+            self.unload_count = 0
+            self.adapters = []
+
+        def load_lora_weights(self, path, **kwargs):
+            self.loaded.append((path, kwargs))
+
+        def set_adapters(self, names, adapter_weights):
+            self.adapters.append((names, adapter_weights))
+
+        def unload_lora_weights(self):
+            self.unload_count += 1
+
+    service = QwenImageEditService(Settings(_env_file=None, qwen_edit_lightning_lora_enabled=False))
+    pipe = FakePipeline()
+    service._lora_path = "unblur-lora"
+    service._lora_weight_name = "unblur.safetensors"
+    service._lora_scale = 0.15
+    service._apply_edit_lora(pipe)
+
+    service._lora_path = None
+    service._lora_weight_name = None
+    service._apply_edit_lora(pipe)
+
+    assert pipe.loaded == [
+        (
+            "unblur-lora",
+            {"adapter_name": "qwen_edit_unblur", "weight_name": "unblur.safetensors"},
+        )
+    ]
+    assert pipe.unload_count == 1
+    assert service._edit_lora_active is False
+    assert service._active_adapter_key is not None
+
+
+def test_qwen_edit_injects_pre_sharded_large_components_without_pipeline_remap(monkeypatch):
+    class FakePipeline:
+        components = {}
+        hf_device_map = None
+
+        @classmethod
+        def from_pretrained(cls, _model_path, **kwargs):
+            cls.load_kwargs = kwargs
+            return cls()
+
+        def set_progress_bar_config(self, **_kwargs):
+            pass
+
+    class FakeModelManager:
+        def unload_except(self, _model_name):
+            pass
+
+        def register_model(self, *_args, **_kwargs):
+            pass
+
+        def activate_model(self, _model_name):
+            pass
+
+    total_budget = {0: "22GiB", 1: "22GiB", 2: "22GiB", 3: "22GiB"}
+    class FakeShardedComponent:
+        def __init__(self, device_map):
+            self.hf_device_map = device_map
+
+    sharded_transformer = FakeShardedComponent(
+        {"transformer_blocks.0": 0, "transformer_blocks.1": 1}
+    )
+    sharded_text_encoder = FakeShardedComponent(
+        {"model.layers.0": 2, "model.layers.1": 3}
+    )
+    settings = Settings(
+        _env_file=None,
+        device="cuda",
+        model_gpu_count=4,
+        qwen_edit_pipeline_class="QwenImageEditPlusPipeline",
+    )
+    service = QwenImageEditService(settings)
+    service._model_manager = FakeModelManager()
+    monkeypatch.setattr(diffusers, "QwenImageEditPlusPipeline", FakePipeline)
+    monkeypatch.setattr(
+        "app.qwen_edit_service.get_pipeline_device_map_kwargs",
+        lambda *_args: {"device_map": "balanced", "max_memory": total_budget.copy()},
+    )
+    monkeypatch.setattr(service, "_load_sharded_transformer", lambda *_args: sharded_transformer)
+    monkeypatch.setattr(service, "_load_sharded_text_encoder", lambda *_args: sharded_text_encoder)
+    monkeypatch.setattr(service, "_move_unsharded_components_to_device", lambda *_args: None)
+    monkeypatch.setattr(service, "_configure_edit_pipeline", lambda *_args: None)
+
+    service._get_pipeline()
+
+    assert FakePipeline.load_kwargs["transformer"] is sharded_transformer
+    assert FakePipeline.load_kwargs["text_encoder"] is sharded_text_encoder
+    assert "device_map" not in FakePipeline.load_kwargs
+    assert "max_memory" not in FakePipeline.load_kwargs
+    assert service._pipe.hf_device_map == {
+        "transformer.transformer_blocks.0": 0,
+        "transformer.transformer_blocks.1": 1,
+        "text_encoder.model.layers.0": 2,
+        "text_encoder.model.layers.1": 3,
+    }
+
+
+def test_qwen_edit_moves_unsharded_vae_to_pipeline_execution_device():
+    class FakeModule:
+        def __init__(self, *, device="cpu", device_map=None):
+            self._device = device
+            self.hf_device_map = device_map
+            self.moved_to = None
+
+        def parameters(self):
+            yield type("Parameter", (), {"device": self._device})()
+
+        def to(self, device):
+            self.moved_to = str(device)
+            self._device = str(device)
+            return self
+
+    class FakeTorch:
+        class nn:
+            Module = FakeModule
+
+    vae = FakeModule()
+    transformer = FakeModule(device="cuda:1", device_map={"block": 1})
+    pipe = type(
+        "Pipeline",
+        (),
+        {
+            "components": {"transformer": transformer, "vae": vae},
+            "_execution_device": "cuda:0",
+        },
+    )()
+    service = QwenImageEditService(Settings(_env_file=None, device="cuda"))
+    service._device = "cuda"
+
+    service._move_unsharded_components_to_device(pipe, FakeTorch)
+
+    assert vae.moved_to == "cuda:0"
+    assert transformer.moved_to is None
+
+
+def test_model_manager_distinguishes_device_map_from_cpu_offload():
+    class FakePipeline:
+        def __init__(self):
+            self.moves = []
+
+        def to(self, device):
+            self.moves.append(device)
+
+    manager = ModelManager()
+    pipe = FakePipeline()
+
+    manager.register_model("mapped", pipe, 1.0, device_mapped=True)
+    assert manager.activate_model("mapped") is True
+
+    assert pipe.moves == []
+    assert "mapped" in manager._device_mapped_models
+    assert "mapped" not in manager._cpu_offload_models
 
 
 def test_qwen_unblur_lora_settings_respect_enabled_switch():

@@ -25,8 +25,17 @@ class ModelManager:
         self._model_sizes: dict[str, float] = {}  # MB
         self._last_access: dict[str, float] = {}
         self._cpu_offload_models: set[str] = set()
+        self._device_mapped_models: set[str] = set()
         
-    def register_model(self, name: str, pipe: any, size_mb: float, *, cpu_offload: bool = False) -> None:
+    def register_model(
+        self,
+        name: str,
+        pipe: any,
+        size_mb: float,
+        *,
+        cpu_offload: bool = False,
+        device_mapped: bool = False,
+    ) -> None:
         """注册模型"""
         self._models[name] = pipe
         self._model_sizes[name] = size_mb
@@ -35,6 +44,10 @@ class ModelManager:
             self._cpu_offload_models.add(name)
         else:
             self._cpu_offload_models.discard(name)
+        if device_mapped:
+            self._device_mapped_models.add(name)
+        else:
+            self._device_mapped_models.discard(name)
         logger.info(f"Registered model '{name}': {size_mb:.1f} MB")
     
     def unregister_model(self, name: str) -> None:
@@ -42,7 +55,8 @@ class ModelManager:
         if name in self._models:
             pipe = self._models.pop(name)
             try:
-                if name not in self._cpu_offload_models and hasattr(pipe, 'to'):
+                placement_managed = name in self._cpu_offload_models or name in self._device_mapped_models
+                if not placement_managed and hasattr(pipe, 'to'):
                     pipe.to('cpu')
                     logger.info(f"Moved model '{name}' to CPU before release")
                 else:
@@ -53,6 +67,7 @@ class ModelManager:
             self._model_sizes.pop(name, None)
             self._last_access.pop(name, None)
             self._cpu_offload_models.discard(name)
+            self._device_mapped_models.discard(name)
             if self._active_model == name:
                 self._active_model = None
             self._release_torch_memory()
@@ -80,12 +95,15 @@ class ModelManager:
         # 加载到GPU
         pipe = self._models[name]
         try:
-            if name not in self._cpu_offload_models and hasattr(pipe, 'to'):
+            placement_managed = name in self._cpu_offload_models or name in self._device_mapped_models
+            if not placement_managed and hasattr(pipe, 'to'):
                 pipe.to('cuda')
             self._active_model = name
             self._last_access[name] = time.time()
             if name in self._cpu_offload_models:
                 logger.info(f"Activated model '{name}' with CPU offload")
+            elif name in self._device_mapped_models:
+                logger.info(f"Activated model '{name}' with multi-GPU device map")
             else:
                 logger.info(f"Activated model '{name}' on GPU")
             return True
@@ -97,7 +115,11 @@ class ModelManager:
         """卸载当前活跃模型"""
         if self._active_model:
             pipe = self._models.get(self._active_model)
-            if pipe and self._active_model not in self._cpu_offload_models and hasattr(pipe, 'to'):
+            placement_managed = (
+                self._active_model in self._cpu_offload_models
+                or self._active_model in self._device_mapped_models
+            )
+            if pipe and not placement_managed and hasattr(pipe, 'to'):
                 try:
                     pipe.to('cpu')
                     logger.info(f"Unloaded model '{self._active_model}' to CPU")
@@ -318,7 +340,13 @@ class QwenImageService:
         self._cpu_offload_enabled = cpu_offload_enabled
         
         # 注册到模型管理器
-        _model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled or device_map_enabled)
+        _model_manager.register_model(
+            self._model_name,
+            pipe,
+            self._estimate_model_size(torch),
+            cpu_offload=cpu_offload_enabled,
+            device_mapped=device_map_enabled,
+        )
         _model_manager.activate_model(self._model_name)
         
         return pipe
@@ -404,34 +432,23 @@ class QwenImageService:
 
     def _move_unsharded_components_to_device(self, pipe: Any, torch: Any) -> None:
         components = getattr(pipe, "components", {}) or {}
+        target_device = self._pipeline_execution_device(pipe)
         for name, component in components.items():
             if not isinstance(component, torch.nn.Module):
                 continue
             if getattr(component, "hf_device_map", None):
                 continue
-            target_device = self._least_used_cuda_device(torch)
             try:
                 component.to(target_device)
                 logger.info("Moved Qwen Image component '%s' to %s", name, target_device)
             except Exception as exc:
                 logger.debug("Failed to move Qwen Image component '%s' to %s: %s", name, target_device, exc)
 
-    def _least_used_cuda_device(self, torch: Any) -> str:
-        if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
-            return self._device
-        device_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
-        if device_count <= 1:
-            return self._device
-        memory_by_device: list[tuple[int, int]] = []
-        for index in range(device_count):
-            try:
-                memory_by_device.append((torch.cuda.memory_allocated(index), index))
-            except Exception as exc:
-                logger.debug("Failed to read allocated memory for cuda:%s: %s", index, exc)
-        if not memory_by_device:
-            return self._device
-        _, device_index = min(memory_by_device)
-        return f"cuda:{device_index}"
+    def _pipeline_execution_device(self, pipe: Any) -> str:
+        execution_device = getattr(pipe, "_execution_device", None)
+        if execution_device is not None and str(execution_device).startswith("cuda"):
+            return str(execution_device)
+        return "cuda:0" if self._device == "cuda" else self._device
 
     def _log_device_map(self, pipe: Any) -> None:
         pipeline_device_map = getattr(pipe, "hf_device_map", None)

@@ -92,3 +92,34 @@ def test_selector_falls_back_when_quality_scoring_fails(monkeypatch):
 
     assert selected.candidates[0].selected is False
     assert selected.candidates[0].rejection_reason == "scoring_error"
+
+
+def test_selector_rejects_excessive_false_detail():
+    settings = Settings(_env_file=None, face_candidate_detail_gain_max=0.05)
+
+    selected = FaceCandidateSelector(settings).select(
+        FaceCandidateResult(Image.new("RGB", (32, 32)), (_candidate(),), 1)
+    )
+
+    assert selected.candidates[0].selected is False
+    assert selected.candidates[0].rejection_reason == "over_sharpened"
+
+
+def test_selector_rejects_large_face_color_shift():
+    settings = Settings(
+        _env_file=None,
+        face_candidate_detail_gain_min=0.0,
+        face_candidate_detail_gain_max=1.0,
+        face_candidate_color_shift_max=0.05,
+    )
+    candidate = _candidate(
+        original_face=Image.new("RGB", (32, 32), (70, 45, 35)),
+        restored_face=Image.new("RGB", (32, 32), (230, 210, 195)),
+    )
+
+    selected = FaceCandidateSelector(settings).select(
+        FaceCandidateResult(Image.new("RGB", (32, 32)), (candidate,), 1)
+    )
+
+    assert selected.candidates[0].selected is False
+    assert selected.candidates[0].rejection_reason == "color_shift"

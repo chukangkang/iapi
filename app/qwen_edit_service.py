@@ -26,6 +26,9 @@ class QwenImageEditService:
         self._model_manager = _model_manager
         self._cpu_offload_enabled = False
         self._edit_lora_active = False
+        self._active_adapter_key: Optional[tuple[Any, ...]] = None
+        self._base_scheduler_config: Optional[Any] = None
+        self._lightning_scheduler_active = False
         self._lora_path: Optional[str] = None
         self._lora_weight_name: Optional[str] = None
         self._lora_scale: float = 1.0
@@ -76,7 +79,8 @@ class QwenImageEditService:
         self._lora_path = lora_path
         self._lora_weight_name = lora_weight_name
         self._lora_scale = lora_scale
-        self._get_pipeline()
+        pipe = self._get_pipeline()
+        self._configure_edit_pipeline(pipe)
 
     def _edit_sync(
         self,
@@ -101,6 +105,7 @@ class QwenImageEditService:
         self._lora_scale = lora_scale
 
         pipe = self._get_pipeline()
+        self._configure_edit_pipeline(pipe)
         signature = inspect.signature(pipe.__call__).parameters
         kwargs = {
             "prompt": prompt,
@@ -127,10 +132,22 @@ class QwenImageEditService:
         return result.images[0].convert("RGB")
 
     def _apply_edit_lora(self, pipe) -> None:
-        if self._edit_lora_active:
+        adapter_key = (
+            self.settings.qwen_edit_lightning_lora_enabled,
+            self.settings.qwen_edit_lightning_lora_path,
+            self.settings.qwen_edit_lightning_lora_weight_name,
+            self.settings.qwen_edit_lightning_lora_scale,
+            self._lora_path,
+            self._lora_weight_name,
+            self._lora_scale if self._lora_path else None,
+        )
+        if self._active_adapter_key == adapter_key:
             return
         if not hasattr(pipe, "load_lora_weights"):
             return
+
+        if self._edit_lora_active:
+            self._clear_edit_lora(pipe)
 
         adapter_names = []
         adapter_weights = []
@@ -158,14 +175,31 @@ class QwenImageEditService:
             adapter_weights.append(self._lora_scale)
         if adapter_names and hasattr(pipe, "set_adapters"):
             pipe.set_adapters(adapter_names, adapter_weights=adapter_weights)
-        self._edit_lora_active = True
+        self._edit_lora_active = bool(adapter_names)
+        self._active_adapter_key = adapter_key
         logger.info("Qwen Edit LoRA adapters active: %s", adapter_names)
+
+    def _clear_edit_lora(self, pipe) -> None:
+        if hasattr(pipe, "unload_lora_weights"):
+            try:
+                pipe.unload_lora_weights()
+            except Exception as exc:
+                logger.warning("Failed to unload previous Qwen Edit LoRA adapters: %s", exc)
+        elif hasattr(pipe, "disable_lora"):
+            try:
+                pipe.disable_lora()
+            except Exception as exc:
+                logger.warning("Failed to disable previous Qwen Edit LoRA adapters: %s", exc)
+        self._edit_lora_active = False
+        self._active_adapter_key = None
 
     def _apply_edit_scheduler(self, pipe) -> None:
         scheduler = getattr(pipe, "scheduler", None)
         if scheduler is None:
             logger.warning("Qwen Edit scheduler config skipped: pipeline has no scheduler")
             return
+        if self._base_scheduler_config is None:
+            self._base_scheduler_config = scheduler.config
         base_shift = self.settings.qwen_edit_scheduler_base_shift
         scheduler_kwargs = {
             "base_image_seq_len": 256,
@@ -184,11 +218,24 @@ class QwenImageEditService:
             "use_karras_sigmas": False,
         }
         pipe.scheduler = scheduler.__class__.from_config(scheduler.config, **scheduler_kwargs)
+        self._lightning_scheduler_active = True
         logger.info("Applied Qwen Edit Lightning scheduler: base_shift=%.4f", base_shift)
+
+    def _restore_edit_scheduler(self, pipe) -> None:
+        if not self._lightning_scheduler_active or self._base_scheduler_config is None:
+            return
+        scheduler = getattr(pipe, "scheduler", None)
+        if scheduler is None:
+            return
+        pipe.scheduler = scheduler.__class__.from_config(self._base_scheduler_config)
+        self._lightning_scheduler_active = False
+        logger.info("Restored base Qwen Edit scheduler for quality inference")
 
     def _configure_edit_pipeline(self, pipe) -> None:
         if self.settings.qwen_edit_lightning_lora_enabled:
             self._apply_edit_scheduler(pipe)
+        else:
+            self._restore_edit_scheduler(pipe)
         self._apply_edit_lora(pipe)
 
     def _prepare_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
@@ -456,23 +503,39 @@ class QwenImageEditService:
         load_kwargs.update(get_pipeline_device_map_kwargs(self.settings, torch, self._device))
         device_map_enabled = uses_pipeline_device_map(load_kwargs)
         transformer_sharded = False
+        text_encoder_sharded = False
         transformer = None
+        text_encoder = None
         if device_map_enabled:
             transformer = self._load_sharded_transformer(diffusers, torch, load_kwargs)
             transformer_sharded = transformer is not None
+            if transformer_sharded:
+                text_encoder = self._load_sharded_text_encoder(torch, load_kwargs)
+                text_encoder_sharded = text_encoder is not None
 
         model_path = self.settings.qwen_edit_model_path
         pipeline_load_kwargs = load_kwargs.copy()
         if transformer_sharded:
             pipeline_load_kwargs["transformer"] = transformer
-            remaining_max_memory = get_remaining_cuda_max_memory(self.settings, torch, reserve_gib=2)
-            if remaining_max_memory:
-                pipeline_load_kwargs["max_memory"] = remaining_max_memory
-                logger.info("Adjusted Qwen Edit pipeline max_memory after transformer load: %s", remaining_max_memory)
+        if text_encoder_sharded:
+            pipeline_load_kwargs["text_encoder"] = text_encoder
+        if transformer_sharded and text_encoder_sharded:
+            # The two large components already own layer-level device maps.
+            # A second pipeline-level map treats each as an indivisible module,
+            # double-counts their budgets, and can move the 16 GiB text encoder
+            # onto a GPU that already holds a transformer shard.
+            pipeline_load_kwargs.pop("device_map", None)
+            pipeline_load_kwargs.pop("max_memory", None)
 
         pipe = pipeline_cls.from_pretrained(model_path, **pipeline_load_kwargs)
 
-        device_map_enabled = device_map_enabled or transformer_sharded
+        device_map_enabled = device_map_enabled or transformer_sharded or text_encoder_sharded
+        if transformer_sharded or text_encoder_sharded:
+            pipe.hf_device_map = self._merge_component_device_maps(
+                transformer=transformer,
+                text_encoder=text_encoder,
+            )
+            logger.info("Qwen Edit pipeline device map restored from pre-sharded components: %s", pipe.hf_device_map)
         cpu_offload_enabled = False if device_map_enabled else apply_pipeline_cpu_offload(pipe, self.settings, self._device)
         if not cpu_offload_enabled and not device_map_enabled:
             pipe.to(self._device)
@@ -490,10 +553,36 @@ class QwenImageEditService:
         self._model_name = current_model
         self._cpu_offload_enabled = cpu_offload_enabled
 
-        self._model_manager.register_model(self._model_name, pipe, self._estimate_model_size(torch), cpu_offload=cpu_offload_enabled or device_map_enabled)
+        self._model_manager.register_model(
+            self._model_name,
+            pipe,
+            self._estimate_model_size(torch),
+            cpu_offload=cpu_offload_enabled,
+            device_mapped=device_map_enabled,
+        )
         self._model_manager.activate_model(self._model_name)
 
         return pipe
+
+    @staticmethod
+    def _merge_component_device_maps(**components) -> dict[str, object]:
+        """Build the pipeline map omitted when pre-sharded components are injected.
+
+        Diffusers uses a non-None pipeline ``hf_device_map`` to distinguish
+        normal Accelerate multi-GPU dispatch hooks from sequential CPU-offload
+        hooks while loading LoRA adapters. Without this aggregate map, loading
+        the Unblur LoRA removes the GPU dispatch hooks and re-enables them as
+        sequential CPU offload.
+        """
+        merged: dict[str, object] = {}
+        for component_name, component in components.items():
+            component_map = getattr(component, "hf_device_map", None)
+            if not isinstance(component_map, dict):
+                continue
+            for module_name, device in component_map.items():
+                key = component_name if not module_name else f"{component_name}.{module_name}"
+                merged[key] = device
+        return merged
 
     def _load_sharded_transformer(self, diffusers, torch, load_kwargs):
         transformer_cls = getattr(diffusers, "QwenImageTransformer2DModel", None)
@@ -517,13 +606,63 @@ class QwenImageEditService:
             logger.info("Qwen Edit transformer device map: %s", ", ".join(f"{k}={v}" for k, v in sorted(per_device.items())))
         return transformer
 
+    def _load_sharded_text_encoder(self, torch, load_kwargs):
+        import transformers
+
+        text_encoder_cls = getattr(transformers, "Qwen2_5_VLForConditionalGeneration", None)
+        if text_encoder_cls is None:
+            logger.warning(
+                "Qwen2_5_VLForConditionalGeneration unavailable; falling back to pipeline-level text encoder loading"
+            )
+            return None
+        if self._looks_like_single_file(self.settings.qwen_edit_model_path):
+            logger.warning("Single-file model cannot load text encoder subfolder separately")
+            return None
+
+        text_encoder_kwargs = {
+            key: value
+            for key, value in load_kwargs.items()
+            if key in {"torch_dtype", "token"}
+        }
+        text_encoder_kwargs["device_map"] = "balanced"
+        remaining_max_memory = get_remaining_cuda_max_memory(self.settings, torch, reserve_gib=2)
+        if remaining_max_memory:
+            text_encoder_kwargs["max_memory"] = remaining_max_memory
+        logger.info(
+            "Loading Qwen Edit text encoder with layer-level sharding: device_map=%s max_memory=%s",
+            text_encoder_kwargs["device_map"],
+            text_encoder_kwargs.get("max_memory"),
+        )
+        text_encoder = text_encoder_cls.from_pretrained(
+            self.settings.qwen_edit_model_path,
+            subfolder="text_encoder",
+            **text_encoder_kwargs,
+        )
+        device_map = getattr(text_encoder, "hf_device_map", None)
+        if device_map:
+            per_device: dict[str, int] = {}
+            for device in device_map.values():
+                key = str(device)
+                per_device[key] = per_device.get(key, 0) + 1
+            logger.info(
+                "Qwen Edit text encoder device map: %s",
+                ", ".join(f"{key}={value}" for key, value in sorted(per_device.items())),
+            )
+        return text_encoder
+
     def _looks_like_single_file(self, model_path: str) -> bool:
         suffix = Path(model_path).suffix.lower()
         return suffix in {".safetensors", ".ckpt", ".pt", ".pth"}
 
     def _move_unsharded_components_to_device(self, pipe, torch) -> None:
-        """将未被 device_map 管理的组件移到显存使用最少的 GPU。"""
+        """Move unsharded components to the pipeline execution device.
+
+        Qwen pipelines create VAE inputs on ``_execution_device``. Placing the
+        VAE on a different, less-used GPU causes an immediate convolution device
+        mismatch instead of providing useful load balancing.
+        """
         components = getattr(pipe, "components", {}) or {}
+        target_device = self._pipeline_execution_device(pipe)
         for name, component in components.items():
             if not isinstance(component, torch.nn.Module):
                 continue
@@ -535,29 +674,17 @@ class QwenImageEditService:
                 continue
             if current_device != "cpu":
                 continue
-            target_device = self._least_used_cuda_device(torch)
             try:
                 component.to(target_device)
                 logger.info("Moved Qwen Edit component '%s' to %s", name, target_device)
             except Exception as exc:
                 logger.warning("Failed to move Qwen Edit component '%s' to %s: %s", name, target_device, exc)
 
-    def _least_used_cuda_device(self, torch) -> str:
-        if not self._device or not self._device.startswith("cuda") or not torch.cuda.is_available():
-            return self._device
-        device_count = min(self.settings.model_gpu_count, torch.cuda.device_count(), 4)
-        if device_count <= 1:
-            return self._device
-        memory_by_device: list[tuple[int, int]] = []
-        for index in range(device_count):
-            try:
-                memory_by_device.append((torch.cuda.memory_allocated(index), index))
-            except Exception:
-                pass
-        if not memory_by_device:
-            return self._device
-        _, device_index = min(memory_by_device)
-        return f"cuda:{device_index}"
+    def _pipeline_execution_device(self, pipe) -> str:
+        execution_device = getattr(pipe, "_execution_device", None)
+        if execution_device is not None and str(execution_device).startswith("cuda"):
+            return str(execution_device)
+        return "cuda:0" if self._device == "cuda" else self._device
 
     def _resolve_device(self, torch) -> str:
         if self.settings.device != "auto":
@@ -600,7 +727,7 @@ class QwenImageEditService:
         """卸载当前pipeline"""
         if self._pipe is not None:
             try:
-                if not self._cpu_offload_enabled and hasattr(self._pipe, 'to'):
+                if not self._cpu_offload_enabled and not self._has_device_map() and hasattr(self._pipe, 'to'):
                     self._pipe.to('cpu')
                     logger.info(f"Moved pipeline to CPU before release: {self._model_name}")
                 else:
@@ -609,6 +736,9 @@ class QwenImageEditService:
                 logger.warning(f"Failed to unload pipeline: {e}")
             self._pipe = None
             self._edit_lora_active = False
+            self._active_adapter_key = None
+            self._base_scheduler_config = None
+            self._lightning_scheduler_active = False
             self._cpu_offload_enabled = False
             self._model_manager.unregister_model(self._model_name)
             self._model_manager._release_torch_memory()
@@ -616,3 +746,6 @@ class QwenImageEditService:
     def unload(self) -> None:
         """主动释放当前服务持有的 pipeline。"""
         self._unload_pipeline()
+
+    def _has_device_map(self) -> bool:
+        return bool(getattr(self._pipe, "hf_device_map", None))

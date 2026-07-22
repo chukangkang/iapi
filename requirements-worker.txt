@@ -31,8 +31,9 @@ sentencepiece>=0.2.0
 protobuf>=5.27.0
 safetensors>=0.4.4
 opencv-python>=4.10.0
+kornia-rs>=0.1.9
 realesrgan>=0.3.0
 psutil>=6.0.0
 
-git+https://github.com/huggingface/diffusers.git
+#git+https://github.com/huggingface/diffusers.git
 #pip install tb-nightly -i https://mirrors.aliyun.com/pypi/simple
