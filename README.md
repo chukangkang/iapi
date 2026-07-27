@@ -355,6 +355,7 @@ python -m pytest -q
 - SwinIR 报 `attn_mask size mismatch`：说明模型结构参数与官方权重不一致。当前彩色降噪模型必须使用 `img_size=128`、`window_size=8`；JPEG 彩色模型必须使用 `img_size=126`、`window_size=7`。
 - SwinIR 报 `Inplace update to inference tensor outside InferenceMode`：更新到当前代码；旧代码在离开 `torch.inference_mode()` 后执行了原地 `clamp_`。当前实现使用非原地后处理。
 - ArcFace 报 `No module named 'onnx'`：GPU Worker 依赖未重新安装。执行 `python -m pip install -r requirements-worker.txt`，或单独执行 `python -m pip install "onnx>=1.16,<2"`，然后重启 Worker。
+- OSS 上传报 `No module named 'Crypto'`：在启动 Worker 的同一 Python 环境执行 `python -m pip install -r requirements-worker.txt`，或单独安装 `python -m pip install "pycryptodome>=3.20,<4"`；可用 `python -c "from Crypto.Cipher import AES; print(AES.block_size)"` 验证。不要安装名称相似的 `crypto` 包。
 - 人脸未贴回：查看 `restoration_face_scores`、`rejection_reason`、`restoration_faces_pasted`。
 - SUPIR 503：检查 GPU、模型路径、容器日志和 `/health`；2GB 显存无法运行。
 
